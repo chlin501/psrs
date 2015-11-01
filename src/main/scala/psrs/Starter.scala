@@ -21,7 +21,10 @@ import akka.actor.Actor
 import akka.actor.ActorLogging
 import akka.actor.ActorRef
 import akka.actor.ActorSystem
+import akka.actor.Address
+import akka.actor.Deploy
 import akka.actor.Props
+import akka.remote.RemoteScope
 
 import com.typesafe.config.Config
 import com.typesafe.config.ConfigFactory
@@ -52,6 +55,8 @@ protected[psrs] class Starter(config: Config) {
 
   protected[psrs] var workers = Seq.empty[ActorRef]
 
+  protected[psrs] def systemName = config.getString("psrs.system-name")
+
   protected[psrs] def initialize() = system match {
     case None => {
       system = Option(ActorSystem("PSRS", config))
@@ -61,15 +66,14 @@ protected[psrs] class Starter(config: Config) {
         val port = ary(1).toInt
         log.debug("Initialize worker #"+idx+" at host: "+host+" port: "+port)
         system.map { sys => workers +:= 
-          sys.actorOf(WorkerImpl.props(host, port), WorkerImpl.name(idx)) 
+          sys.actorOf(WorkerImpl.props(systemName, host, port), 
+                      WorkerImpl.name(idx))
         }
       }
-      deploy
     }
     case _ => { log.error("Fail initializing the system!"); System.exit(-1) }
   }
 
-  def deploy = workers.foreach { worker => }
 }
 
 trait Worker extends Actor with ActorLogging {
@@ -83,8 +87,11 @@ object WorkerImpl {
 
   def name(idx: Int) = classOf[WorkerImpl].getSimpleName + idx
 
-  def props(host: String, port: Int): Props = 
-    Props(classOf[WorkerImpl], host, port)
+  def props(systemName: String, host: String, port: Int): Props = 
+    Props(classOf[WorkerImpl], host, port).withDeploy(Deploy(scope = 
+      RemoteScope(Address("akka.tcp", systemName, host, port))
+    ))
+
 }
 
 protected[psrs] class WorkerImpl(host: String, port: Int) extends Worker {
