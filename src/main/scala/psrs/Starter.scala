@@ -17,14 +17,8 @@
  */
 package psrs
 
-import akka.actor.Actor
-import akka.actor.ActorLogging
 import akka.actor.ActorRef
 import akka.actor.ActorSystem
-import akka.actor.Address
-import akka.actor.Deploy
-import akka.actor.Props
-import akka.remote.RemoteScope
 
 import com.typesafe.config.Config
 import com.typesafe.config.ConfigFactory
@@ -66,35 +60,10 @@ protected[psrs] class Starter(config: Config) {
         val port = ary(1).toInt
         log.debug("Initialize worker #"+idx+" at host: "+host+" port: "+port)
         system.map { sys => workers +:= 
-          sys.actorOf(WorkerImpl.props(systemName, host, port), 
-                      WorkerImpl.name(idx))
+          sys.actorOf(Worker.props(systemName, host, port), Worker.name(idx))
         }
       }
     }
-    case _ => { log.error("Fail initializing the system!"); System.exit(-1) }
+    case _ => log.error("Fail initializing the system!")
   }
-
-}
-
-trait Worker extends Actor with ActorLogging {
-
-  def unknown: Receive = {
-    case msg@_ => log.warning("Unknown message: {}", msg)
-  }
-}
-
-object WorkerImpl {
-
-  def name(idx: Int) = classOf[WorkerImpl].getSimpleName + idx
-
-  def props(systemName: String, host: String, port: Int): Props = 
-    Props(classOf[WorkerImpl], host, port).withDeploy(Deploy(scope = 
-      RemoteScope(Address("akka.tcp", systemName, host, port))
-    ))
-
-}
-
-protected[psrs] class WorkerImpl(host: String, port: Int) extends Worker {
-
-  override def receive = unknown
 }
