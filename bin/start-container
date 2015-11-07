@@ -1,0 +1,10 @@
+#!/bin/sh
+
+address=$1
+
+if [ "x" = "x$address" ]; then
+  echo "worker address is not provided!"
+  exit -1
+else
+  echo "start launching container process at $address"
+fi

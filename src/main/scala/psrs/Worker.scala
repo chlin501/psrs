@@ -31,13 +31,22 @@ trait Worker extends Actor with ActorLogging {
   }
 }
 
+trait Protocol
+case object Remote extends Protocol {
+  override def toString(): String = "akka.tcp"
+}
+case object Local extends Protocol {
+  override def toString(): String = "akka"
+}
+
 object Worker {
 
   def name(idx: Int) = classOf[DefaultWorker].getSimpleName + idx
 
-  def props(systemName: String, host: String, port: Int): Props =
+  def props(systemName: String, host: String, port: Int, 
+            protocol: Protocol = Remote): Props =
     Props(classOf[DefaultWorker], host, port).withDeploy(Deploy(scope =
-      RemoteScope(Address("akka.tcp", systemName, host, port))
+      RemoteScope(Address(protocol.toString, systemName, host, port))
     ))
 }
 
