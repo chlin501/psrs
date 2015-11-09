@@ -24,12 +24,11 @@ version := "0.1"
 scalaVersion := "2.11.7"
 
 resolvers ++= Seq(
-  "Apache" at "https://repository.apache.org/content/repositories/releases",
-  "Oncue" at "https://dl.bintray.com/oncue/releases/",
-  "Scalaz" at "http://dl.bintray.com/scalaz/releases"
+  "Apache" at "https://repository.apache.org/content/repositories/releases"
 )
 
 libraryDependencies ++= Seq(
+  "com.github.scopt" %% "scopt" % "3.3.0",
   "com.typesafe" % "config" % "1.3.0",
   "com.typesafe.akka" %% "akka-actor"    % "2.4.0",
   "com.typesafe.akka" %% "akka-remote"   % "2.4.0",

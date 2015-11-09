@@ -1,3 +1,5 @@
+#!/bin/sh
+#
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -14,13 +16,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#!/bin/sh
-
 address=$1
 
 if [ "x" = "x$address" ]; then
   echo "worker address is not provided!"
   exit -1
 else
-  echo "start launching container process at $address"
+  echo "start launching container process at $address ..."
+  host=`echo "$address" | cut -d':' -f1`
+  port=`echo "$address" | cut -d':' -f2`
+  #sbt "runMain psrs.Container --host $host --port $port" 
 fi

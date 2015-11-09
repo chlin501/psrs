@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+#
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -13,9 +16,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 from pyhocon import ConfigFactory
 import argparse
@@ -36,7 +36,7 @@ def get_conf():
 
 def start(workers):
   for worker in workers:
-    ret = subprocess.call(['./bin/start-container', str(worker)]) 
+    ret = subprocess.call(['bin/start-container', str(worker)]) 
     if 0 != ret:
       print "error: fail launcing worker!"
     else: 
