@@ -28,39 +28,44 @@ import org.slf4j.LoggerFactory
 
 import scala.collection.JavaConversions._
 
-object Starter {
+object Controller {
 
-  val log = LoggerFactory.getLogger(classOf[Starter])
+  val log = LoggerFactory.getLogger(classOf[Controller])
 
-  def main(args: Array[String]): Unit = create(ConfigFactory.load)
-
-  def create(config: Config): Starter = {
-    val starter = new Starter(config) 
-    starter.initialize
-    starter
+  def main(args: Array[String]): Unit = {
+    val conf = ConfigFactory.load("controller")
+    new Controller(conf).initialize
   }
 }
 
-protected[psrs] class Starter(config: Config) {
+protected[psrs] class Controller(config: Config) {
 
-  import Starter._
+  import Controller._
 
   protected[psrs] var system: Option[ActorSystem] = None
 
   protected[psrs] var workers = Seq.empty[ActorRef]
 
-  protected[psrs] def systemName = config.getString("psrs.system-name")
+  protected[psrs] def systemName: String = config.getString("psrs.system-name")
+
+  protected[psrs] def protocol: Protocol = 
+    config.getString("psrs.protocol") match {
+      case "akka" => Local
+      case "akka.tcp" => Remote
+      case s@_ => throw new RuntimeException("Invalid protocol: "+s)
+    }
 
   protected[psrs] def initialize() = system match {
     case None => {
-      system = Option(ActorSystem("PSRS", config))
+      system = Option(ActorSystem(config.getString("psrs.system-name"), config))
       config.getStringList("psrs.workers").zipWithIndex.map { case (e, idx) => 
         val ary = e.split(":")
         val host = ary(0)
         val port = ary(1).toInt
         log.debug("Initialize worker #"+idx+" at host: "+host+" port: "+port)
         system.map { sys => workers +:= 
-          sys.actorOf(Worker.props(systemName, host, port), Worker.name(idx))
+          sys.actorOf(Worker.props(systemName, host, port, protocol), 
+                      Worker.name(idx))
         }
       }
     }
