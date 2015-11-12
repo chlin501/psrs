@@ -27,7 +27,7 @@ def get_args():
   parser.add_argument("-c" , "--conf", dest="conf_path", help="get workers from the config file")
   return parser.parse_args()
 
-def start(protocol, system_name, workers):
+def start(workers):
   for worker in workers:
     ary = worker.split(':')
     host = str(ary[0])
@@ -39,9 +39,7 @@ if __name__ == '__main__':
   args = get_args()
   if args.conf_path is not None:
     conf = ConfigFactory.parse_file(args.conf_path)
-    protocol = conf['psrs.protocol'] 
-    system_name = conf['psrs.system-name'] 
     workers = conf['psrs.workers']
-    start(protocol, system_name, workers)
+    start(workers)
   else:
     print "error: application.conf is not supplied!"

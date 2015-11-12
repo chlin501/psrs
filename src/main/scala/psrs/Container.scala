@@ -71,8 +71,4 @@ object Container {
   }
 }
 
-protected[psrs] class Container extends Worker {
-
-  override def receive = unknown
-
-}
+protected[psrs] class Container  

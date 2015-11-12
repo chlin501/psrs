@@ -32,6 +32,7 @@ libraryDependencies ++= Seq(
   "com.typesafe" % "config" % "1.3.0",
   "com.typesafe.akka" %% "akka-actor"    % "2.4.0",
   "com.typesafe.akka" %% "akka-remote"   % "2.4.0",
+  "org.apache.curator" % "apache-curator" % "3.0.0",
   "org.slf4j" % "slf4j-log4j12" % "1.7.12",
   "junit" % "junit" % "4.10",
   "com.typesafe.akka" %% "akka-testkit" % "2.4.0" % "test",

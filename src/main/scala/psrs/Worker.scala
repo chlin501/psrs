@@ -53,15 +53,13 @@ object Worker {
 protected[psrs] class DefaultWorker(host: String, port: Int)
       extends Worker with Computation {
 
+  override def execute() { }
 
-  /**
-   * - sort local array.
-   * - regular sample.
-   * - find split points.
-   */
-  override def execute() { 
+  def read(file: String): Array[Int] = Array.empty[Int]
 
-  }
+  def quickSort(ary: Array[Int]) { }
+
+  def sampling(ary: Array[Int]): Array[Int] = Array.empty[Int]
 
   override def receive = unknown
 }
