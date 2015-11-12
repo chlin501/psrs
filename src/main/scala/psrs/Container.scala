@@ -17,32 +17,33 @@
  */
 package psrs
 
+import java.net.InetAddress
+
 import akka.actor.ActorSystem
 import akka.actor.Address
 
 import com.typesafe.config.ConfigFactory
 import com.typesafe.config.ConfigValueFactory
 
+import scala.util.Failure
+import scala.util.Success
+import scala.util.Try
+
 object Container {
 
   protected[psrs] var system: Option[ActorSystem] = None
 
-  protected[psrs] case class Options(protocol: String = "akka.tcp", 
-                                     systemName: String = "psrs", 
-                                     host: String = "localhost", 
+  protected[psrs] case class Options(host: String = "localhost", 
                                      port: Int = 20000)
 
-  def address(opts: Options) = Address(opts.protocol, opts.systemName, 
-    opts.host, opts.port)
+  def address: String = Try(InetAddress.getLocalHost.getHostAddress) match {
+    case Success(addr) => addr
+    case Failure(cause) => "localhost"
+  }
 
   def main(args: Array[String]) {
     val parser = new scopt.OptionParser[Options]("container") {
       head("container", "0.1")     
-      opt[String]('p', "protocol") action { (p, opts) => 
-        opts.copy(protocol = p)
-      } text("protocol used by the system") 
-      opt[String]('s', "system-name") action { (s, opts) => 
-        opts.copy(systemName = s) } text("system name") 
       opt[String]('h', "host") required() valueName("<host>") action { 
         (h, opts) => opts.copy(host = h) 
       } text("host on which the computation will run") 
@@ -54,8 +55,11 @@ object Container {
       case Some(opts) => {
         val conf = ConfigFactory.load("container").withValue (
           "akka.remote.netty.tcp.hostname", 
-          ConfigValueFactory.fromAnyRef(address(opts))
-        ) 
+          ConfigValueFactory.fromAnyRef(opts.host)
+        ).withValue (
+          "akka.remote.netty.tcp.port", 
+          ConfigValueFactory.fromAnyRef(opts.port)
+        )
         system match {
           case Some(sys) => 
           case None => system = 

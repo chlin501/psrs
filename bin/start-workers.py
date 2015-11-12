@@ -22,30 +22,26 @@ import argparse
 import os
 import subprocess
 
-def get_workers(conf_path):
-  if None is not conf_path:
-    conf = ConfigFactory.parse_file(conf_path)
-    return conf['psrs.workers']
-  else:
-    return None
-
-def get_conf():
+def get_args():
   parser = argparse.ArgumentParser(description='Find wokers.')   
   parser.add_argument("-c" , "--conf", dest="conf_path", help="get workers from the config file")
   return parser.parse_args()
 
-def start(workers):
+def start(protocol, system_name, workers):
   for worker in workers:
-    ret = subprocess.call(['bin/start-container', str(worker)]) 
-    if 0 != ret:
-      print "error: fail launcing worker!"
-    else: 
-      print "worker %s is launched." % worker
+    ary = worker.split(':')
+    host = str(ary[0])
+    port = str(ary[1])
+    cmd = 'nohup sbt "runMain psrs.Container --host {0} --port {1}" > /tmp/psrs_{0}_{1}.log 2>&1 &'.format(host, port)
+    subprocess.Popen(cmd, shell=True) 
 
 if __name__ == '__main__':
-  args = get_conf()
+  args = get_args()
   if args.conf_path is not None:
-    workers = get_workers(args.conf_path)
-    start(workers)
+    conf = ConfigFactory.parse_file(args.conf_path)
+    protocol = conf['psrs.protocol'] 
+    system_name = conf['psrs.system-name'] 
+    workers = conf['psrs.workers']
+    start(protocol, system_name, workers)
   else:
     print "error: application.conf is not supplied!"
