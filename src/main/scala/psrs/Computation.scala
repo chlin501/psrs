@@ -21,5 +21,26 @@ trait Computation {
 
   def execute()
 
+  def sync()
+
 }
 
+object Computation {
+
+  def create(): Computation = new DefaultComputation
+
+}
+
+protected[psrs] class DefaultComputation extends Computation {
+
+  override def execute() { }
+
+  override def sync() { }
+
+  def read(file: String): Array[Int] = Array.empty[Int]
+
+  def quickSort(ary: Array[Int]) { }
+
+  def sampling(ary: Array[Int]): Array[Int] = Array.empty[Int]
+
+}

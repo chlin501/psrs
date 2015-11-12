@@ -24,11 +24,22 @@ import akka.actor.Deploy
 import akka.actor.Props
 import akka.remote.RemoteScope
 
+sealed trait Message
+case object Start extends Message
+
 trait Worker extends Actor with ActorLogging {
+
+  protected def initialize()
+
+  def start: Receive = {
+    case Start => initialize 
+  }
 
   def unknown: Receive = {
     case msg@_ => log.warning("Unknown message: {}", msg)
   }
+
+  override def receive = start orElse unknown
 }
 
 trait Protocol
@@ -50,16 +61,9 @@ object Worker {
     ))
 }
 
-protected[psrs] class DefaultWorker(host: String, port: Int)
-      extends Worker with Computation {
+protected[psrs] class DefaultWorker(host: String, port: Int) extends Worker {
 
-  override def execute() { }
+  override def initialize() { }
 
-  def read(file: String): Array[Int] = Array.empty[Int]
-
-  def quickSort(ary: Array[Int]) { }
-
-  def sampling(ary: Array[Int]): Array[Int] = Array.empty[Int]
-
-  override def receive = unknown
+  override def receive = super.receive
 }
