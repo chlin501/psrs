@@ -36,7 +36,8 @@ sealed trait Message
 case class Initialize(refs: Seq[ActorRef], zookeepers: Seq[String]) 
       extends Message
 case object Execute extends Message
-case class Sample[T](data: T) extends Message
+case class Collect[T](data: T) extends Message
+case class Broadcast[T](data: T) extends Message
 
 trait Worker extends Actor with ActorLogging {
 
@@ -102,6 +103,8 @@ protected[psrs] class DefaultWorker extends Worker {
 
   protected[psrs] var collected = Array.empty[Int]
 
+  protected[psrs] var broadcasted = Array.empty[Int]
+
   protected[psrs] def host: String = self.path.address.host match {
     case Some(h) => h
     case None => "localhost"
@@ -119,22 +122,33 @@ protected[psrs] class DefaultWorker extends Worker {
     Sorting.quickSort(ary)
     barrier.map(_.sync({ step => log.info("Sync at step {} ...", step) }))
     val chunk = Math.ceil(ary.length.toDouble / (peers.length.toDouble + 1d))
-    val sampled = (for(idx <- 0 until ary.length) yield { 
-      if(0 == idx % chunk) idx else -1
-    }).filter(_ != -1)
+    var sampled = Seq.empty[Int]
+    for(idx <- 0 until ary.length) if(0 == idx % chunk) sampled :+= ary(idx) 
     barrier.map(_.sync({ step => peers.map { peer => at(peer.path.name) match {
-      case 0 => peer ! Sample[Array[Int]](sampled.toArray[Int])
+      case 0 => peer ! Collect[Array[Int]](sampled.toArray[Int])
       case _ =>
     }}}))
-    if(!collected.isEmpty) Sorting.quickSort(collected)
-    // find pivotal values
-    barrier.map(_.sync({ step =>  // boradcast
-    }))
+    var pivotal = Seq.empty[Int]
+    if(!collected.isEmpty) {
+      Sorting.quickSort(collected)
+      for(idx <- 0 until collected.length) 
+        if(0 == idx % chunk) pivotal :+= collected(idx)
+      pivotal = pivotal.tail
+    }
+    barrier.map(_.sync({ step => peers.map { peer => if(!pivotal.isEmpty)
+      peer ! Broadcast[Array[Int]](pivotal.toArray[Int])
+    }}))
+    // divide and dispatch 
+    // sync
   }
 
-  protected def sample: Receive = {
-    case Sample(data) => collected ++= data.asInstanceOf[Array[Int]]
+  protected def collect: Receive = {
+    case Collect(data) => collected ++= data.asInstanceOf[Array[Int]]
   }
 
-  override def receive = sample orElse super.receive
+  protected def broadcast: Receive = {
+    case Broadcast(data) => broadcasted ++= data.asInstanceOf[Array[Int]]
+  }
+
+  override def receive = collect orElse broadcast orElse super.receive
 }
