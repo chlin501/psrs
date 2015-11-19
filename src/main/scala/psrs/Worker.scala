@@ -25,6 +25,8 @@ import akka.actor.Deploy
 import akka.actor.Props
 import akka.remote.RemoteScope
 
+import java.io.File
+
 sealed trait Message
 case class Initialize(refs: Seq[ActorRef]) extends Message
 case object Execute extends Message
@@ -33,7 +35,9 @@ trait Worker extends Actor with ActorLogging {
 
   protected var peers = Seq.empty[ActorRef]
 
-  protected def initialize(refs: Seq[ActorRef]) = peers = refs
+  protected def initialize(refs: Seq[ActorRef]) {
+    peers = refs
+  }
 
   protected def init: Receive = {
     case Initialize(refs) => initialize(refs) 
@@ -74,7 +78,7 @@ object Worker {
 protected[psrs] class DefaultWorker extends Worker {
 
   override def execute() { 
-
+      
   }
 
   override def receive = super.receive
