@@ -138,11 +138,15 @@ protected[psrs] class DefaultWorker extends Worker {
     barrier.map(_.sync({ step => peers.map { peer => if(!pivotal.isEmpty)
       peer ! Broadcast[Array[Int]](pivotal.toArray[Int])
     }}))
+    var result = Array.empty[Array[Int]]
     if(!broadcasted.isEmpty) {
-      var from = 0
-      var end = broadcasted.head
+      val pivotals = 0 +: broadcasted :+ data.last
+      for(idx <- 0 until pivotals.length) if((pivotals.length - 1) != idx) 
+        result :+= data.filter( e => e > broadcasted(idx) && 
+          e < broadcasted(idx +1))
     }
-    // sync
+    barrier.map(_.sync({ step => // send to peer
+    }))
   }
 
   protected def collect: Receive = {
