@@ -116,14 +116,14 @@ protected[psrs] class DefaultWorker extends Worker {
   }
 
   override def execute() { 
-    val ary = reader.foldLeft(Array.empty[Int]){ (result, line) => 
+    val data = reader.foldLeft(Array.empty[Int]){ (result, line) => 
       result :+ line.toInt 
     }
-    Sorting.quickSort(ary)
+    Sorting.quickSort(data)
     barrier.map(_.sync({ step => log.info("Sync at step {} ...", step) }))
-    val chunk = Math.ceil(ary.length.toDouble / (peers.length.toDouble + 1d))
+    val chunk = Math.ceil(data.length.toDouble / (peers.length.toDouble + 1d))
     var sampled = Seq.empty[Int]
-    for(idx <- 0 until ary.length) if(0 == idx % chunk) sampled :+= ary(idx) 
+    for(idx <- 0 until data.length) if(0 == idx % chunk) sampled :+= data(idx) 
     barrier.map(_.sync({ step => peers.map { peer => at(peer.path.name) match {
       case 0 => peer ! Collect[Array[Int]](sampled.toArray[Int])
       case _ =>
@@ -138,7 +138,10 @@ protected[psrs] class DefaultWorker extends Worker {
     barrier.map(_.sync({ step => peers.map { peer => if(!pivotal.isEmpty)
       peer ! Broadcast[Array[Int]](pivotal.toArray[Int])
     }}))
-    // divide and dispatch 
+    if(!broadcasted.isEmpty) {
+      var from = 0
+      var end = broadcasted.head
+    }
     // sync
   }
 
