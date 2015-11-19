@@ -28,7 +28,7 @@ import akka.remote.RemoteScope
 import java.io.File
 
 import psrs.io.Reader
-import psrs.util.{ ZooKeeper, Curator }
+import psrs.util.{ ZooKeeper, Barrier }
 
 import scala.util.Sorting
 
@@ -36,16 +36,21 @@ sealed trait Message
 case class Initialize(refs: Seq[ActorRef], zookeepers: Seq[String]) 
       extends Message
 case object Execute extends Message
+case class Sample[T](data: T) extends Message
 
 trait Worker extends Actor with ActorLogging {
 
+  protected[psrs] val name = self.path.name
+
+  protected[psrs] val index = name.split("_")(1).toInt
+
   protected var peers = Seq.empty[ActorRef]
 
-  protected var barrier: Option[Curator] = None
+  protected var barrier: Option[Barrier] = None
 
   protected def initialize(refs: Seq[ActorRef], zookeepers: Seq[String]) {
     peers = refs
-    barrier = Option(Curator.create("/barrier", peers.length,
+    barrier = Option(Barrier.create("/barrier", peers.length,
       zookeepers.map { zk => ZooKeeper.fromString(zk) }
     ))
   }
@@ -77,7 +82,9 @@ case object Local extends Protocol {
 
 object Worker {
 
-  def name(idx: Int) = classOf[DefaultWorker].getSimpleName + idx
+  def name(idx: Int) = classOf[DefaultWorker].getSimpleName + "_" +idx
+
+  def at(name: String): Int = name.split("_")(0).toInt
 
   def props(systemName: String, host: String, port: Int,
             protocol: Protocol = Remote): Props =
@@ -88,8 +95,12 @@ object Worker {
 
 protected[psrs] class DefaultWorker extends Worker {
 
+  import Worker._
+
   protected[psrs] var reader = Reader.fromFile(
     "/tmp/input_"+host+"_"+port+".txt")
+
+  protected[psrs] var collected = Array.empty[Int]
 
   protected[psrs] def host: String = self.path.address.host match {
     case Some(h) => h
@@ -107,7 +118,23 @@ protected[psrs] class DefaultWorker extends Worker {
     }
     Sorting.quickSort(ary)
     barrier.map(_.sync({ step => log.info("Sync at step {} ...", step) }))
+    val chunk = Math.ceil(ary.length.toDouble / (peers.length.toDouble + 1d))
+    val sampled = (for(idx <- 0 until ary.length) yield { 
+      if(0 == idx % chunk) idx else -1
+    }).filter(_ != -1)
+    barrier.map(_.sync({ step => peers.map { peer => at(peer.path.name) match {
+      case 0 => peer ! Sample[Array[Int]](sampled.toArray[Int])
+      case _ =>
+    }}}))
+    if(!collected.isEmpty) Sorting.quickSort(collected)
+    // find pivotal values
+    barrier.map(_.sync({ step =>  // boradcast
+    }))
   }
 
-  override def receive = super.receive
+  protected def sample: Receive = {
+    case Sample(data) => collected ++= data.asInstanceOf[Array[Int]]
+  }
+
+  override def receive = sample orElse super.receive
 }

@@ -40,21 +40,21 @@ protected[psrs] case class ZooKeeper(host: String = "localhost",
   override def toString(): String = host + ":" + port
 }
 
-object Curator {
+object Barrier {
 
   def create(parentPath: String, nrPeers: Int, targets: Seq[ZooKeeper]): 
-      Curator = {
+      Barrier = {
     val servers = targets.map(_.toString).mkString(",")
     val curator = CuratorFrameworkFactory.builder.
                                           sessionTimeoutMs(3*60*1000).
                                           retryPolicy(new RetryNTimes(3, 1000)).
                                           connectString(servers).build
-    new DefaultCurator(curator, parentPath, nrPeers: Int)
+    new DefaultBarrier(curator, parentPath, nrPeers: Int)
   }
 
 }
 
-trait Curator {
+trait Barrier {
 
   def sync()
 
@@ -62,9 +62,9 @@ trait Curator {
 
 }
 
-protected[psrs] class DefaultCurator(curator: CuratorFramework, 
+protected[psrs] class DefaultBarrier(curator: CuratorFramework, 
                                      parentPath: String, 
-                                     nrPeers: Int) extends Curator {
+                                     nrPeers: Int) extends Barrier {
 
   protected[psrs] var step: Int = 0
 
