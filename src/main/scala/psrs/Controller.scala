@@ -28,6 +28,8 @@ import org.slf4j.LoggerFactory
 
 import scala.collection.JavaConversions._
 
+import scala.collection.JavaConversions._
+
 object Controller {
 
   val log = LoggerFactory.getLogger(classOf[Controller])
@@ -68,7 +70,9 @@ protected[psrs] class Controller(config: Config) {
                       Worker.name(idx))
         }
         workers.foreach { worker => 
-          worker ! Initialize(workers diff Seq(worker)) 
+          val zookeepers = config.getStringList("psrs.zookeeprs").toSeq
+          worker ! Initialize(workers diff Seq(worker), zookeepers) 
+          worker ! Execute
         }
       }
     }

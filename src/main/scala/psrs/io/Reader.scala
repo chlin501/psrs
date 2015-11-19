@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package psrs
+package psrs.io
 
 import java.io.FileReader
 import java.io.BufferedReader
@@ -26,23 +26,33 @@ trait Reader {
 
   def foreach(f:(Line) => Unit)
 
+  def foldLeft[R](r: R)(f: (R, Line) => R): R
+
 }
 
 object Reader {
 
   def fromFile(name: String): Reader = 
     new DefaultReader(new BufferedReader(new FileReader(name)))
-}
 
+}
 
 protected[psrs] class DefaultReader(reader: BufferedReader) extends Reader {
   
   override def foreach(f: (Line) => Unit) {
-    var line: String = reader.readLine 
+    var line: Line = reader.readLine 
     while(null != line) {
       f(line)
       line = reader.readLine
     }
+  }
+
+  override def foldLeft[R](r: R)(f: (R, Line) => R): R = {
+    var result = r 
+    foreach { line => 
+      result = f(r, line) 
+    }
+    result
   }
 
 }  

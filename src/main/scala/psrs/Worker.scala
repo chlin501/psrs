@@ -27,20 +27,29 @@ import akka.remote.RemoteScope
 
 import java.io.File
 
+import psrs.io.Reader
+import psrs.util.{ ZooKeeper, Curator }
+
 sealed trait Message
-case class Initialize(refs: Seq[ActorRef]) extends Message
+case class Initialize(refs: Seq[ActorRef], zookeepers: Seq[String]) 
+      extends Message
 case object Execute extends Message
 
 trait Worker extends Actor with ActorLogging {
 
   protected var peers = Seq.empty[ActorRef]
 
-  protected def initialize(refs: Seq[ActorRef]) {
+  protected var barrier: Option[Curator] = None
+
+  protected def initialize(refs: Seq[ActorRef], zookeepers: Seq[String]) {
     peers = refs
+    barrier = Option(Curator.create("/barrier", peers.length,
+      zookeepers.map { zk => ZooKeeper.fromString(zk) }
+    ))
   }
 
   protected def init: Receive = {
-    case Initialize(refs) => initialize(refs) 
+    case Initialize(refs, zks) => initialize(refs, zks) 
   }
 
   protected def execute()  
@@ -77,8 +86,24 @@ object Worker {
 
 protected[psrs] class DefaultWorker extends Worker {
 
+  protected[psrs] var reader = Reader.fromFile(
+    "/tmp/input_"+host+"_"+port+".txt")
+
+  protected[psrs] def host: String = self.path.address.host match {
+    case Some(h) => h
+    case None => "localhost"
+  }
+
+  protected[psrs] def port: Int = self.path.address.port match {
+    case Some(p) => p
+    case None => 20000
+  }
+
   override def execute() { 
-      
+    val seq = reader.foldLeft(Seq.empty[Int]){ (result, line) => 
+      result :+ line.toInt 
+    }
+                
   }
 
   override def receive = super.receive
