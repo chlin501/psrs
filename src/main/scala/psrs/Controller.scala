@@ -67,6 +67,9 @@ protected[psrs] class Controller(config: Config) {
           sys.actorOf(Worker.props(systemName, host, port, protocol), 
                       Worker.name(idx))
         }
+        workers.foreach { worker => 
+          worker ! Initialize(workers diff Seq(worker)) 
+        }
       }
     }
     case _ => log.error("Fail initializing the system!")

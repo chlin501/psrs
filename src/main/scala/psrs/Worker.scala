@@ -18,6 +18,7 @@
 package psrs
 
 import akka.actor.Actor
+import akka.actor.ActorRef
 import akka.actor.ActorLogging
 import akka.actor.Address
 import akka.actor.Deploy
@@ -25,21 +26,30 @@ import akka.actor.Props
 import akka.remote.RemoteScope
 
 sealed trait Message
-case object Start extends Message
+case class Initialize(refs: Seq[ActorRef]) extends Message
+case object Execute extends Message
 
 trait Worker extends Actor with ActorLogging {
 
-  protected def initialize()
+  protected var peers = Seq.empty[ActorRef]
 
-  def start: Receive = {
-    case Start => initialize 
+  protected def initialize(refs: Seq[ActorRef]) = peers = refs
+
+  protected def init: Receive = {
+    case Initialize(refs) => initialize(refs) 
+  }
+
+  protected def execute()  
+
+  protected def exec: Receive = {
+    case Execute => execute 
   }
 
   def unknown: Receive = {
     case msg@_ => log.warning("Unknown message: {}", msg)
   }
 
-  override def receive = start orElse unknown
+  override def receive = init orElse exec orElse unknown
 }
 
 trait Protocol
@@ -54,16 +64,18 @@ object Worker {
 
   def name(idx: Int) = classOf[DefaultWorker].getSimpleName + idx
 
-  def props(systemName: String, host: String, port: Int, 
+  def props(systemName: String, host: String, port: Int,
             protocol: Protocol = Remote): Props =
-    Props(classOf[DefaultWorker], host, port).withDeploy(Deploy(scope =
+    Props(classOf[DefaultWorker]).withDeploy(Deploy(scope =
       RemoteScope(Address(protocol.toString, systemName, host, port))
     ))
 }
 
-protected[psrs] class DefaultWorker(host: String, port: Int) extends Worker {
+protected[psrs] class DefaultWorker extends Worker {
 
-  override def initialize() { }
+  override def execute() { 
+
+  }
 
   override def receive = super.receive
 }
