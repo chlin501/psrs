@@ -30,6 +30,8 @@ import java.io.File
 import psrs.io.Reader
 import psrs.util.{ ZooKeeper, Curator }
 
+import scala.util.Sorting
+
 sealed trait Message
 case class Initialize(refs: Seq[ActorRef], zookeepers: Seq[String]) 
       extends Message
@@ -100,10 +102,11 @@ protected[psrs] class DefaultWorker extends Worker {
   }
 
   override def execute() { 
-    val seq = reader.foldLeft(Seq.empty[Int]){ (result, line) => 
+    val ary = reader.foldLeft(Array.empty[Int]){ (result, line) => 
       result :+ line.toInt 
     }
-                
+    Sorting.quickSort(ary)
+    barrier.map(_.sync({ step => log.info("Sync at step {} ...", step) }))
   }
 
   override def receive = super.receive
