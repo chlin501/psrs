@@ -38,6 +38,7 @@ case class Initialize(refs: Seq[ActorRef], zookeepers: Seq[String])
 case object Execute extends Message
 case class Collect[T](data: T) extends Message
 case class Broadcast[T](data: T) extends Message
+case class Aggregate[T](data: T) extends Message
 
 trait Worker extends Actor with ActorLogging {
 
@@ -105,6 +106,8 @@ protected[psrs] class DefaultWorker extends Worker {
 
   protected[psrs] var broadcasted = Array.empty[Int]
 
+  protected[psrs] var aggregated = Array.empty[Int]
+
   protected[psrs] def host: String = self.path.address.host match {
     case Some(h) => h
     case None => "localhost"
@@ -135,6 +138,7 @@ protected[psrs] class DefaultWorker extends Worker {
         if(0 == idx % chunk) pivotal :+= collected(idx)
       pivotal = pivotal.tail
     }
+    log.info("Pivotal: {}", pivotal)
     barrier.map(_.sync({ step => peers.map { peer => if(!pivotal.isEmpty)
       peer ! Broadcast[Array[Int]](pivotal.toArray[Int])
     }}))
@@ -145,8 +149,17 @@ protected[psrs] class DefaultWorker extends Worker {
         result :+= data.filter( e => e > broadcasted(idx) && 
           e < broadcasted(idx +1))
     }
-    barrier.map(_.sync({ step => // send to peer
-    }))
+    log.info("Result: {}", result)
+    barrier.map(_.sync({ step => if(result.length == (peers.length + 1) ) {
+/*
+      TODO: insert self to peers with corresponded index given
+      for(idx <- 0 until result.length) 
+        if(index == idx) self ! Aggregate[Array[Int]](result(idx)) 
+        else peers(idx) ! Aggregate[Array[Int]](result(idx)) 
+*/
+    }}))
+    Sorting.quickSort(aggregated)
+    // write to local file
   }
 
   protected def collect: Receive = {
@@ -157,5 +170,9 @@ protected[psrs] class DefaultWorker extends Worker {
     case Broadcast(data) => broadcasted ++= data.asInstanceOf[Array[Int]]
   }
 
-  override def receive = collect orElse broadcast orElse super.receive
+  protected def aggregate: Receive = {
+    case Aggregate(data) => aggregated ++= data.asInstanceOf[Array[Int]]
+  }
+
+  override def receive = collect orElse broadcast orElse aggregate orElse super.receive
 }
