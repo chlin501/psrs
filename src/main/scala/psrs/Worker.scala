@@ -118,24 +118,27 @@ protected[psrs] class DefaultWorker extends Worker {
 
   import Worker._
 
-  protected[psrs] var reader = Reader.fromFile(
-    "/tmp/input_"+host+"_"+port+".txt")
+  protected val file = "/tmp/input_"+host+"_"+port+".txt"
 
-  protected[psrs] def host: String = self.path.address.host match {
+  protected var reader = Reader.fromFile(file)
+
+  protected def host: String = self.path.address.host match {
     case Some(h) => h
     case None => "localhost"
   }
 
-  protected[psrs] def port: Int = self.path.address.port match {
+  protected def port: Int = self.path.address.port match {
     case Some(p) => p
     case None => 20000
   }
 
   override def execute() { 
+    log.info("Start read data from ...")
     val data = reader.foldLeft(Array.empty[Int]){ (result, line) => 
       result :+ line.toInt 
     }
     Sorting.quickSort(data)
+    log.info("sorted data {}", data)
     barrier.map(_.sync({ step => log.info("Sync at step {} ...", step) }))
     val chunk = Math.ceil(data.length.toDouble / (peers.length.toDouble + 1d))
     var sampled = Seq.empty[Int]

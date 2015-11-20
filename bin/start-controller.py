@@ -23,26 +23,23 @@ import os
 import subprocess
 
 def get_args():
-  parser = argparse.ArgumentParser(description='Find wokers.')   
-  parser.add_argument("-c" , "--conf", dest="conf_path", help="get workers from the config file")
+  parser = argparse.ArgumentParser(description='Find controller.')   
+  parser.add_argument("-c" , "--conf", dest="conf_path", help="get controller from the config file")
   return parser.parse_args()
 
-def start(workers, log_dir):
+def start(host, port, log_dir):
   if not os.path.exists(log_dir):
     os.makedirs(log_dir)  
-  for worker in workers:
-    ary = worker.split(':')
-    host = str(ary[0])
-    port = str(ary[1])
-    cmd = 'nohup sbt "runMain psrs.Container --host {0} --port {1}" > {2}/container_{0}_{1}.log 2>&1 &'.format(host, port, log_dir)
-    subprocess.Popen(cmd, shell=True) 
+  cmd = 'nohup sbt "runMain psrs.Controller --host {0} --port {1}" > {2}/controller_{0}_{1}.log 2>&1 &'.format(host, port, log_dir)
+  subprocess.Popen(cmd, shell=True) 
 
 if __name__ == '__main__':
   args = get_args()
   if args.conf_path is not None:
     conf = ConfigFactory.parse_file(args.conf_path)
-    workers = conf['psrs.workers']
-    log_dir = conf['psrs.log-dir']
-    start(workers, log_dir)
+    host = conf['akka.remote.netty.tcp.hostname'] 
+    port = conf['akka.remote.netty.tcp.port'] 
+    log_dir = conf['psrs.log-dir'] 
+    start(host, port, log_dir)
   else:
     print "error: application.conf is not supplied!"

@@ -34,9 +34,26 @@ object Controller {
 
   val log = LoggerFactory.getLogger(classOf[Controller])
 
+  protected[psrs] case class Options(host: String = "localhost", 
+                                     port: Int = 10000)
+
   def main(args: Array[String]): Unit = {
-    val conf = ConfigFactory.load("controller")
-    new Controller(conf).initialize
+    val parser = new scopt.OptionParser[Options]("controller") {
+      head("controller", "0.1")     
+      opt[String]('h', "host") required() valueName("<host>") action { 
+        (h, opts) => opts.copy(host = h) 
+      } text("host of the controller") 
+      opt[Int]('p', "port") required() valueName("<port>") action { 
+        (p, opts) => opts.copy(port = p) 
+      } text("port of the controller") 
+    }    
+    parser.parse(args, Options()) match {
+      case Some(opts) => {
+        val conf = ConfigFactory.load("controller")
+        new Controller(conf).initialize
+      }
+      case None => 
+    }
   }
 }
 
