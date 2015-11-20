@@ -42,13 +42,19 @@ case class Aggregate[T](data: T) extends Message
 
 trait Worker extends Actor with ActorLogging {
 
-  protected[psrs] val name = self.path.name
+  protected val name = self.path.name
 
-  protected[psrs] val index = name.split("_")(1).toInt
+  protected val index = name.split("_")(1).toInt
 
   protected var peers = Seq.empty[ActorRef]
 
   protected var barrier: Option[Barrier] = None
+
+  protected var collected = Array.empty[Int]
+
+  protected var broadcasted = Array.empty[Int]
+
+  protected var aggregated = Array.empty[Int]
 
   protected def initialize(refs: Seq[ActorRef], zookeepers: Seq[String]) {
     peers = refs
@@ -67,11 +73,24 @@ trait Worker extends Actor with ActorLogging {
     case Execute => execute 
   }
 
+  protected def collect: Receive = {
+    case Collect(data) => collected ++= data.asInstanceOf[Array[Int]]
+  }
+
+  protected def broadcast: Receive = {
+    case Broadcast(data) => broadcasted ++= data.asInstanceOf[Array[Int]]
+  }
+
+  protected def aggregate: Receive = {
+    case Aggregate(data) => aggregated ++= data.asInstanceOf[Array[Int]]
+  }
+
   def unknown: Receive = {
     case msg@_ => log.warning("Unknown message: {}", msg)
   }
 
-  override def receive = init orElse exec orElse unknown
+  override def receive = init orElse exec orElse collect orElse broadcast orElse aggregate orElse unknown
+
 }
 
 trait Protocol
@@ -101,12 +120,6 @@ protected[psrs] class DefaultWorker extends Worker {
 
   protected[psrs] var reader = Reader.fromFile(
     "/tmp/input_"+host+"_"+port+".txt")
-
-  protected[psrs] var collected = Array.empty[Int]
-
-  protected[psrs] var broadcasted = Array.empty[Int]
-
-  protected[psrs] var aggregated = Array.empty[Int]
 
   protected[psrs] def host: String = self.path.address.host match {
     case Some(h) => h
@@ -151,28 +164,15 @@ protected[psrs] class DefaultWorker extends Worker {
     }
     log.info("Result: {}", result)
     barrier.map(_.sync({ step => if(result.length == (peers.length + 1) ) {
-/*
-      TODO: insert self to peers with corresponded index given
-      for(idx <- 0 until result.length) 
-        if(index == idx) self ! Aggregate[Array[Int]](result(idx)) 
-        else peers(idx) ! Aggregate[Array[Int]](result(idx)) 
-*/
+      val all = peers.patch(index, Seq(self), 0)
+      all.zipWithIndex.foreach { case (ref, idx) => if(ref.equals(self))
+        self ! Aggregate[Array[Int]](result(idx)) else 
+        ref ! Aggregate[Array[Int]](result(idx)) 
+      }
     }}))
     Sorting.quickSort(aggregated)
-    // write to local file
+    // TODO: write to local file
   }
 
-  protected def collect: Receive = {
-    case Collect(data) => collected ++= data.asInstanceOf[Array[Int]]
-  }
-
-  protected def broadcast: Receive = {
-    case Broadcast(data) => broadcasted ++= data.asInstanceOf[Array[Int]]
-  }
-
-  protected def aggregate: Receive = {
-    case Aggregate(data) => aggregated ++= data.asInstanceOf[Array[Int]]
-  }
-
-  override def receive = collect orElse broadcast orElse aggregate orElse super.receive
+  override def receive = super.receive
 }
