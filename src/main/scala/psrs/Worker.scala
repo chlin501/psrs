@@ -30,6 +30,7 @@ import com.typesafe.config.Config
 import java.io.File
 
 import psrs.io.Reader
+import psrs.io.Writer
 import psrs.util.{ ZooKeeper, Barrier }
 
 import scala.util.Sorting
@@ -56,6 +57,8 @@ trait Worker extends Actor with ActorLogging {
 
   protected var reader: Option[Reader] = None
 
+  protected var writer: Option[Writer] = None
+
   protected var collected = Array.empty[Int]
 
   protected var broadcasted = Array.empty[Int]
@@ -74,11 +77,20 @@ trait Worker extends Actor with ActorLogging {
     val input = inputDir+"/"+host+"_"+port+".txt"
     log.info("Input data is from {}", input)
     reader = Option(Reader.fromFile(input))
+    val outDir = conf.getString("psrs.output-dir")
+    val output = host+"_"+port+".txt"
+    log.info("Output data to {}/{}", outDir, output)
+    writer = Option(Writer.withFile(outDir, output))
   }
 
   protected def getReader: Reader = reader match {
     case Some(r) => r
     case None => throw new RuntimeException("Reader not initialized!")
+  }
+
+  protected def getWriter: Writer = writer match {
+    case Some(w) => w
+    case None => throw new RuntimeException("Writer not initialized!")
   }
 
   protected def host: String = self.path.address.host match {
@@ -188,7 +200,8 @@ protected[psrs] class DefaultWorker extends Worker {
       }
     }}))
     Sorting.quickSort(aggregated)
-    // TODO: write to local file
+    log.info("Aggregated result: {}", aggregated)
+    getWriter.write(aggregated.mkString(",")+"\n").close
   }
 
   override def receive = super.receive
