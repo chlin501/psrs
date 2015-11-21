@@ -49,6 +49,7 @@ object Barrier {
                                           sessionTimeoutMs(3*60*1000).
                                           retryPolicy(new RetryNTimes(3, 1000)).
                                           connectString(servers).build
+    curator.start
     new DefaultBarrier(curator, parentPath, nrPeers: Int)
   }
 

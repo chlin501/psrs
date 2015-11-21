@@ -86,11 +86,11 @@ protected[psrs] class Controller(config: Config) {
           sys.actorOf(Worker.props(systemName, host, port, protocol), 
                       Worker.name(idx))
         }
-        workers.foreach { worker => 
-          val zookeepers = config.getStringList("psrs.zookeepers").toSeq
-          worker ! Initialize(workers diff Seq(worker), zookeepers, config) 
-          worker ! Execute
-        }
+      }
+      workers.foreach { worker => 
+        val zookeepers = config.getStringList("psrs.zookeepers").toSeq
+        worker ! Initialize(workers diff Seq(worker), zookeepers, config) 
+        worker ! Execute
       }
     }
     case _ => log.error("Fail initializing the system!")

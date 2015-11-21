@@ -65,6 +65,7 @@ trait Worker extends Actor with ActorLogging {
   protected def initialize(refs: Seq[ActorRef], zookeepers: Seq[String], 
                            conf: Config) {
     peers = refs
+    log.info("Peers contain {}", peers)
     config = Option(conf)
     barrier = Option(Barrier.create("/barrier", peers.length,
       zookeepers.map { zk => ZooKeeper.fromString(zk) }
