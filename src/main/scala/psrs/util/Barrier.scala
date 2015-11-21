@@ -71,6 +71,8 @@ trait Barrier {
 
   def sync(f: (Int) => Unit)
 
+  def currentStep: Int
+
 }
 
 protected[psrs] class DefaultBarrier(curator: CuratorFramework, 
@@ -81,14 +83,22 @@ protected[psrs] class DefaultBarrier(curator: CuratorFramework,
 
   protected[psrs] var step: Int = 0
 
-  override def sync() = sync({ step => })
+  override def currentStep: Int = step
+
+  override def sync() = sync({ s => })
   
   override def sync(f: (Int) => Unit) {
+    log.info("barrier sync begin at step {} ...", step)
     val path = root+"/"+step
     curator.create.creatingParentsIfNeeded.forPath(path)
     val barrier = new DistributedDoubleBarrier(curator, path, nrPeers)
+    log.info("enter barrier at step {} ...", step)
     barrier.enter
+    log.info("within barrier at step {} ...", step)
     f(step)
+    log.info("leave barrier at step {} ...", step)
+    step += 1
     barrier.leave
+    log.info("barrier sync end at step {} ...", step)
   }
 }  

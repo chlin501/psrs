@@ -20,12 +20,18 @@ package psrs
 import akka.actor.Actor
 import akka.actor.ActorRef
 import akka.actor.ActorLogging
+import akka.actor.ActorSystem
 import akka.actor.Address
 import akka.actor.Deploy
 import akka.actor.Props
 import akka.remote.RemoteScope
+import akka.remote.AssociatedEvent
 
 import com.typesafe.config.Config
+import com.typesafe.config.ConfigFactory
+
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 
 import java.io.File
 
@@ -34,6 +40,7 @@ import psrs.io.Writer
 import psrs.util.{ ZooKeeper, Barrier }
 
 import scala.util.Sorting
+import scala.collection.JavaConversions._
 
 sealed trait Message
 case class Initialize(refs: Seq[ActorRef], zookeepers: Seq[String], 
@@ -42,12 +49,16 @@ case object Execute extends Message
 case class Collect[T](data: T) extends Message
 case class Broadcast[T](data: T) extends Message
 case class Aggregate[T](data: T) extends Message
+case object Ready extends Message
 
 trait Worker extends Actor with ActorLogging {
 
   protected val name = self.path.name
 
-  protected val index = name.split("_")(1).toInt
+  protected val index = name.indexOf("_") match {
+    case -1 => -1 
+    case _ => name.split("_")(1).toInt
+  }
 
   protected var peers = Seq.empty[ActorRef]
 
@@ -73,15 +84,9 @@ trait Worker extends Actor with ActorLogging {
     barrier = Option(Barrier.create("/barrier", peers.length,
       zookeepers.map { zk => ZooKeeper.fromString(zk) }
     ))
-    val inputDir = conf.getString("psrs.input-dir")
-    val input = inputDir+"/"+host+"_"+port+".txt"
-    log.info("Input data is from {}", input)
-    reader = Option(Reader.fromFile(input))
-    val outDir = conf.getString("psrs.output-dir")
-    val output = host+"_"+port+".txt"
-    log.info("Output data to {}/{}", outDir, output)
-    writer = Option(Writer.withFile(outDir, output))
   }
+
+
 
   protected def getReader: Reader = reader match {
     case Some(r) => r
@@ -98,21 +103,11 @@ trait Worker extends Actor with ActorLogging {
     case None => throw new RuntimeException("Barrier not initialized!")
   }
 
-  protected def host: String = self.path.address.host match {
-    case Some(h) => h
-    case None => "localhost"
-  }
-
-  protected def port: Int = self.path.address.port match {
-    case Some(p) => p
-    case None => 20000
-  }
-
   protected def init: Receive = {
     case Initialize(refs, zks, conf) => initialize(refs, zks, conf) 
   }
 
-  protected def execute()  
+  protected def execute() { }
 
   protected def exec: Receive = {
     case Execute => execute 
@@ -130,11 +125,17 @@ trait Worker extends Actor with ActorLogging {
     case Aggregate(data) => aggregated ++= data.asInstanceOf[Array[Int]]
   }
 
-  def unknown: Receive = {
+  protected def ready(from: ActorRef) { }
+
+  protected def isReady: Receive = {
+    case Ready => ready(sender)
+  }
+
+  def rest: Receive = {
     case msg@_ => log.warning("Unknown message: {}", msg)
   }
 
-  override def receive = init orElse exec orElse collect orElse broadcast orElse aggregate orElse unknown
+  override def receive = init orElse exec orElse collect orElse broadcast orElse aggregate orElse isReady orElse rest
 
 }
 
@@ -152,16 +153,30 @@ object Worker {
 
   def at(name: String): Int = name.split("_")(0).toInt
 
-  def props(systemName: String, host: String, port: Int,
+  def props(ctrl: ActorRef, systemName: String, host: String, port: Int,
             protocol: Protocol = Remote): Props =
-    Props(classOf[DefaultWorker]).withDeploy(Deploy(scope =
+    Props(classOf[DefaultWorker], ctrl, host, port).withDeploy(Deploy(scope =
       RemoteScope(Address(protocol.toString, systemName, host, port))
     ))
 }
 
-protected[psrs] class DefaultWorker extends Worker {
+protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int) 
+      extends Worker {
 
   import Worker._
+
+  override def initialize(refs: Seq[ActorRef], zookeepers: Seq[String], 
+                           conf: Config) {
+    super.initialize(refs, zookeepers, conf)
+    val inputDir = conf.getString("psrs.input-dir")
+    val input = inputDir+"/"+host+"_"+port+".txt"
+    log.info("Input data is from {}", input)
+    reader = Option(Reader.fromFile(input))
+    val outDir = conf.getString("psrs.output-dir")
+    val output = host+"_"+port+".txt"
+    log.info("Output data to {}/{}", outDir, output)
+    writer = Option(Writer.withFile(outDir, output))
+  }
 
   override def execute() { 
     log.info("Start reading data ...")
@@ -169,8 +184,9 @@ protected[psrs] class DefaultWorker extends Worker {
       result :+ line.toInt 
     }
     Sorting.quickSort(data)
-    log.info("Sorted data {}", data)
-    getBarrier.sync({ step => log.info("Sync at step {} ...", step) })
+    log.info("Sorted data {}", data.mkString("<", ", ", ">"))
+    getBarrier.sync
+    log.info("1. Current step {}", getBarrier.currentStep)
     val chunk = Math.ceil(data.length.toDouble / (peers.length.toDouble + 1d))
     var sampled = Seq.empty[Int]
     for(idx <- 0 until data.length) if(0 == idx % chunk) sampled :+= data(idx) 
@@ -178,6 +194,7 @@ protected[psrs] class DefaultWorker extends Worker {
       case 0 => peer ! Collect[Array[Int]](sampled.toArray[Int])
       case _ =>
     }}})
+    log.info("2. Current step {}", getBarrier.currentStep)
     var pivotal = Seq.empty[Int]
     if(!collected.isEmpty) {
       Sorting.quickSort(collected)
@@ -189,6 +206,7 @@ protected[psrs] class DefaultWorker extends Worker {
     getBarrier.sync({ step => peers.map { peer => if(!pivotal.isEmpty)
       peer ! Broadcast[Array[Int]](pivotal.toArray[Int])
     }})
+    log.info("3. Current step {}", getBarrier.currentStep)
     var result = Array.empty[Array[Int]]
     if(!broadcasted.isEmpty) {
       val pivotals = 0 +: broadcasted :+ data.last
@@ -204,10 +222,82 @@ protected[psrs] class DefaultWorker extends Worker {
         ref ! Aggregate[Array[Int]](result(idx)) 
       }
     }})
+    log.info("4. Current step {}", getBarrier.currentStep)
     Sorting.quickSort(aggregated)
     log.info("Aggregated result: {}", aggregated)
     getWriter.write(aggregated.mkString(",")+"\n").close
   }
 
   override def receive = super.receive
+}
+
+object Controller {
+
+  protected[psrs] case class Options(host: String = "localhost", 
+                                     port: Int = 10000)
+
+  def main(args: Array[String]): Unit = {
+    val parser = new scopt.OptionParser[Options]("controller") {
+      head("controller", "0.1")     
+      opt[String]('h', "host") required() valueName("<host>") action { 
+        (h, opts) => opts.copy(host = h) 
+      } text("host of the controller") 
+      opt[Int]('p', "port") required() valueName("<port>") action { 
+        (p, opts) => opts.copy(port = p) 
+      } text("port of the controller") 
+    }    
+    parser.parse(args, Options()) match {
+      case Some(opts) => {
+        val conf = ConfigFactory.load("controller")
+        val system = ActorSystem(conf.getString("psrs.system-name"), conf)
+        system.actorOf(props(conf), name)
+      }
+      case None => 
+    }
+  }
+
+  def props(conf: Config): Props = conf match {
+    case null => throw new IllegalArgumentException("Config is missing!")
+    case _ => Props(classOf[DefaultController], conf)
+  }
+
+  def name: String = classOf[DefaultController].getSimpleName
+
+}
+
+protected[psrs] class DefaultController(conf: Config) extends Worker {
+
+  import Controller._
+
+  protected var workers = Seq.empty[ActorRef]
+
+  protected def systemName: String = conf.getString("psrs.system-name")
+
+  protected def protocol: Protocol = conf.getString("psrs.protocol") match {
+    case "akka" => Local
+    case "akka.tcp" => Remote
+    case s@_ => throw new RuntimeException("Invalid protocol: "+s)
+  }
+
+  override def preStart() = {
+    conf.getStringList("psrs.workers").zipWithIndex.map { case (e, idx) => 
+      val ary = e.split(":")
+      val host = ary(0)
+      val port = ary(1).toInt
+      log.info("Initialize worker #"+idx+" at host: "+host+" port: "+port)
+      workers +:= context.actorOf (
+        Worker.props(self, systemName, host, port, protocol), Worker.name(idx)
+      )
+    }
+    log.info("Worker size: {}", workers.size)
+    workers.foreach { worker => 
+      log.info("Instruct {} starting execution ...", worker.path.name)
+      val zookeepers = conf.getStringList("psrs.zookeepers").toSeq
+      worker ! Initialize(workers diff Seq(worker), zookeepers, conf) 
+      worker ! Execute
+    }
+  }
+
+  override def receive = super.receive
+  
 }
