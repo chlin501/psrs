@@ -22,6 +22,9 @@ import org.apache.curator.framework.CuratorFramework
 import org.apache.curator.retry.RetryNTimes
 import org.apache.curator.framework.recipes.barriers.DistributedDoubleBarrier
 
+import org.apache.zookeeper.CreateMode
+import org.apache.zookeeper.ZooDefs
+
 object ZooKeeper {
 
   def fromString(value: String): ZooKeeper = {
@@ -50,6 +53,7 @@ object Barrier {
                                           retryPolicy(new RetryNTimes(3, 1000)).
                                           connectString(servers).build
     curator.start
+
     new DefaultBarrier(curator, parentPath, nrPeers: Int)
   }
 
@@ -72,8 +76,12 @@ protected[psrs] class DefaultBarrier(curator: CuratorFramework,
   override def sync() = sync({ step => })
   
   override def sync(f: (Int) => Unit) {
-    val barrier = new DistributedDoubleBarrier(curator, parentPath+"/"+step, 
-                                               nrPeers)
+    val path = parentPath+"/"+step
+    curator.create.creatingParentsIfNeeded.
+                   withMode(CreateMode.PERSISTENT).
+                   withACL(ZooDefs.Ids.OPEN_ACL_UNSAFE).
+                   forPath(path)
+    val barrier = new DistributedDoubleBarrier(curator, path, nrPeers)
     barrier.enter
     f(step)
     barrier.leave
