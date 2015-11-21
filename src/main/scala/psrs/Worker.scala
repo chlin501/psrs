@@ -70,7 +70,7 @@ trait Worker extends Actor with ActorLogging {
       zookeepers.map { zk => ZooKeeper.fromString(zk) }
     ))
     val inputDir = conf.getString("psrs.input-dir")
-    val input = inputDir+"_"+host+"_"+port+".txt"
+    val input = inputDir+"/"+host+"_"+port+".txt"
     log.info("Input data is from {}", input)
     reader = Option(Reader.fromFile(input))
   }
@@ -145,9 +145,8 @@ protected[psrs] class DefaultWorker extends Worker {
 
   import Worker._
 
-
   override def execute() { 
-    log.info("Start read data from ...")
+    log.info("Start reading data ...")
     val data = getReader.foldLeft(Array.empty[Int]){ (result, line) => 
       result :+ line.toInt 
     }

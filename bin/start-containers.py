@@ -35,6 +35,7 @@ def start(workers, log_dir):
     ary = worker.split(':')
     host = str(ary[0])
     port = str(ary[1])
+    print "start container %s ..." % worker
     cmd = 'nohup sbt "runMain psrs.Container --host {0} --port {1}" > {2}/container_{0}_{1}.log 2>&1 &'.format(host, port, log_dir)
     subprocess.Popen(cmd, shell=True) 
     time.sleep(1)
