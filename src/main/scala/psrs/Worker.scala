@@ -25,6 +25,8 @@ import akka.actor.Deploy
 import akka.actor.Props
 import akka.remote.RemoteScope
 
+import com.typesafe.config.Config
+
 import java.io.File
 
 import psrs.io.Reader
@@ -33,8 +35,8 @@ import psrs.util.{ ZooKeeper, Barrier }
 import scala.util.Sorting
 
 sealed trait Message
-case class Initialize(refs: Seq[ActorRef], zookeepers: Seq[String]) 
-      extends Message
+case class Initialize(refs: Seq[ActorRef], zookeepers: Seq[String], 
+                      config: Config) extends Message
 case object Execute extends Message
 case class Collect[T](data: T) extends Message
 case class Broadcast[T](data: T) extends Message
@@ -48,7 +50,11 @@ trait Worker extends Actor with ActorLogging {
 
   protected var peers = Seq.empty[ActorRef]
 
+  protected var config: Option[Config] = None
+
   protected var barrier: Option[Barrier] = None
+
+  protected var reader: Option[Reader] = None
 
   protected var collected = Array.empty[Int]
 
@@ -56,15 +62,36 @@ trait Worker extends Actor with ActorLogging {
 
   protected var aggregated = Array.empty[Int]
 
-  protected def initialize(refs: Seq[ActorRef], zookeepers: Seq[String]) {
+  protected def initialize(refs: Seq[ActorRef], zookeepers: Seq[String], 
+                           conf: Config) {
     peers = refs
+    config = Option(conf)
     barrier = Option(Barrier.create("/barrier", peers.length,
       zookeepers.map { zk => ZooKeeper.fromString(zk) }
     ))
+    val inputDir = conf.getString("psrs.input-dir")
+    val input = inputDir+"_"+host+"_"+port+".txt"
+    log.info("Input data is from {}", input)
+    reader = Option(Reader.fromFile(input))
+  }
+
+  protected def getReader: Reader = reader match {
+    case Some(r) => r
+    case None => throw new RuntimeException("Reader not initialized!")
+  }
+
+  protected def host: String = self.path.address.host match {
+    case Some(h) => h
+    case None => "localhost"
+  }
+
+  protected def port: Int = self.path.address.port match {
+    case Some(p) => p
+    case None => 20000
   }
 
   protected def init: Receive = {
-    case Initialize(refs, zks) => initialize(refs, zks) 
+    case Initialize(refs, zks, conf) => initialize(refs, zks, conf) 
   }
 
   protected def execute()  
@@ -118,23 +145,10 @@ protected[psrs] class DefaultWorker extends Worker {
 
   import Worker._
 
-  protected val file = "/tmp/input_"+host+"_"+port+".txt"
-
-  protected var reader = Reader.fromFile(file)
-
-  protected def host: String = self.path.address.host match {
-    case Some(h) => h
-    case None => "localhost"
-  }
-
-  protected def port: Int = self.path.address.port match {
-    case Some(p) => p
-    case None => 20000
-  }
 
   override def execute() { 
     log.info("Start read data from ...")
-    val data = reader.foldLeft(Array.empty[Int]){ (result, line) => 
+    val data = getReader.foldLeft(Array.empty[Int]){ (result, line) => 
       result :+ line.toInt 
     }
     Sorting.quickSort(data)

@@ -88,7 +88,7 @@ protected[psrs] class Controller(config: Config) {
         }
         workers.foreach { worker => 
           val zookeepers = config.getStringList("psrs.zookeeprs").toSeq
-          worker ! Initialize(workers diff Seq(worker), zookeepers) 
+          worker ! Initialize(workers diff Seq(worker), zookeepers, config) 
           worker ! Execute
         }
       }

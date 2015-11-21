@@ -21,6 +21,7 @@ from pyhocon import ConfigFactory
 import argparse
 import os
 import subprocess
+import time
 
 def get_args():
   parser = argparse.ArgumentParser(description='Find wokers.')   
@@ -36,6 +37,7 @@ def start(workers, log_dir):
     port = str(ary[1])
     cmd = 'nohup sbt "runMain psrs.Container --host {0} --port {1}" > {2}/container_{0}_{1}.log 2>&1 &'.format(host, port, log_dir)
     subprocess.Popen(cmd, shell=True) 
+    time.sleep(1)
 
 if __name__ == '__main__':
   args = get_args()
