@@ -4,15 +4,15 @@ echo "stop all processes ..."
 jps | grep sbt-launch | awk '{print $1}' | xargs kill -9
 
 log=$1
-input=$2
+output=$2
 if [ "x" = "x$log" ]; then
   log="/tmp/psrs/logs"
-  input="/tmp/psrs/input"
+  output="/tmp/psrs/output"
 fi
 
 if [ -d $log ]; then
   echo "remove log directory: $log"
   rm -rf $log
-  echo "remove input directory: $input"
-  rm -rf $input
+  echo "remove output directory: $output"
+  rm -rf $output
 fi

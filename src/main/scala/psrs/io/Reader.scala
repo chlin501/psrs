@@ -20,6 +20,9 @@ package psrs.io
 import java.io.FileReader
 import java.io.BufferedReader
 
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
+
 trait Reader {
 
   type Line = String
@@ -38,6 +41,8 @@ object Reader {
 }
 
 protected[psrs] class DefaultReader(reader: BufferedReader) extends Reader {
+
+  val log = LoggerFactory.getLogger(classOf[DefaultReader])
   
   override def foreach(f: (Line) => Unit) {
     var line: Line = reader.readLine 
@@ -50,7 +55,7 @@ protected[psrs] class DefaultReader(reader: BufferedReader) extends Reader {
   override def foldLeft[R](r: R)(f: (R, Line) => R): R = {
     var result = r 
     foreach { line => 
-      result = f(r, line) 
+      result = f(result, line) 
     }
     result
   }

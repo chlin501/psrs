@@ -93,6 +93,11 @@ trait Worker extends Actor with ActorLogging {
     case None => throw new RuntimeException("Writer not initialized!")
   }
 
+  protected def getBarrier: Barrier = barrier match {
+    case Some(b) => b
+    case None => throw new RuntimeException("Barrier not initialized!")
+  }
+
   protected def host: String = self.path.address.host match {
     case Some(h) => h
     case None => "localhost"
@@ -164,15 +169,15 @@ protected[psrs] class DefaultWorker extends Worker {
       result :+ line.toInt 
     }
     Sorting.quickSort(data)
-    log.info("sorted data {}", data)
-    barrier.map(_.sync({ step => log.info("Sync at step {} ...", step) }))
+    log.info("Sorted data {}", data)
+    getBarrier.sync({ step => log.info("Sync at step {} ...", step) })
     val chunk = Math.ceil(data.length.toDouble / (peers.length.toDouble + 1d))
     var sampled = Seq.empty[Int]
     for(idx <- 0 until data.length) if(0 == idx % chunk) sampled :+= data(idx) 
-    barrier.map(_.sync({ step => peers.map { peer => at(peer.path.name) match {
+    getBarrier.sync({ step => peers.map { peer => at(peer.path.name) match {
       case 0 => peer ! Collect[Array[Int]](sampled.toArray[Int])
       case _ =>
-    }}}))
+    }}})
     var pivotal = Seq.empty[Int]
     if(!collected.isEmpty) {
       Sorting.quickSort(collected)
@@ -181,9 +186,9 @@ protected[psrs] class DefaultWorker extends Worker {
       pivotal = pivotal.tail
     }
     log.info("Pivotal: {}", pivotal)
-    barrier.map(_.sync({ step => peers.map { peer => if(!pivotal.isEmpty)
+    getBarrier.sync({ step => peers.map { peer => if(!pivotal.isEmpty)
       peer ! Broadcast[Array[Int]](pivotal.toArray[Int])
-    }}))
+    }})
     var result = Array.empty[Array[Int]]
     if(!broadcasted.isEmpty) {
       val pivotals = 0 +: broadcasted :+ data.last
@@ -192,13 +197,13 @@ protected[psrs] class DefaultWorker extends Worker {
           e < broadcasted(idx +1))
     }
     log.info("Result: {}", result)
-    barrier.map(_.sync({ step => if(result.length == (peers.length + 1) ) {
+    getBarrier.sync({ step => if(result.length == (peers.length + 1) ) {
       val all = peers.patch(index, Seq(self), 0)
       all.zipWithIndex.foreach { case (ref, idx) => if(ref.equals(self))
         self ! Aggregate[Array[Int]](result(idx)) else 
         ref ! Aggregate[Array[Int]](result(idx)) 
       }
-    }}))
+    }})
     Sorting.quickSort(aggregated)
     log.info("Aggregated result: {}", aggregated)
     getWriter.write(aggregated.mkString(",")+"\n").close

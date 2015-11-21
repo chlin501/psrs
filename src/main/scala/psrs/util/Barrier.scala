@@ -25,6 +25,9 @@ import org.apache.curator.framework.recipes.barriers.DistributedDoubleBarrier
 import org.apache.zookeeper.CreateMode
 import org.apache.zookeeper.ZooDefs
 
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
+
 object ZooKeeper {
 
   def fromString(value: String): ZooKeeper = {
@@ -45,21 +48,24 @@ protected[psrs] case class ZooKeeper(host: String = "localhost",
 
 object Barrier {
 
-  def create(parentPath: String, nrPeers: Int, targets: Seq[ZooKeeper]): 
-      Barrier = {
-    val servers = targets.map(_.toString).mkString(",")
-    val curator = CuratorFrameworkFactory.builder.
-                                          sessionTimeoutMs(3*60*1000).
-                                          retryPolicy(new RetryNTimes(3, 1000)).
-                                          connectString(servers).build
-    curator.start
-
-    new DefaultBarrier(curator, parentPath, nrPeers: Int)
+  def create(root: String, nrPeers: Int, targets: Seq[ZooKeeper]): 
+      Barrier = root match {
+    case null | "" => throw new IllegalArgumentException("Invalid root path!")
+    case _ => {
+      require(root.startsWith("/"), "Root path not starts with '/'!") 
+      val servers = targets.map(_.toString).mkString(",")
+      val curator = CuratorFrameworkFactory.builder.
+        sessionTimeoutMs(3*60*1000).retryPolicy(new RetryNTimes(3, 1000)).
+        connectString(servers).build
+      curator.start
+      new DefaultBarrier(curator, root, nrPeers: Int)
+    }
   }
 
 }
 
 trait Barrier {
+
 
   def sync()
 
@@ -68,19 +74,18 @@ trait Barrier {
 }
 
 protected[psrs] class DefaultBarrier(curator: CuratorFramework, 
-                                     parentPath: String, 
+                                     root: String, 
                                      nrPeers: Int) extends Barrier {
+
+  val log = LoggerFactory.getLogger(classOf[DefaultBarrier])
 
   protected[psrs] var step: Int = 0
 
   override def sync() = sync({ step => })
   
   override def sync(f: (Int) => Unit) {
-    val path = parentPath+"/"+step
-    curator.create.creatingParentsIfNeeded.
-                   withMode(CreateMode.PERSISTENT).
-                   withACL(ZooDefs.Ids.OPEN_ACL_UNSAFE).
-                   forPath(path)
+    val path = root+"/"+step
+    curator.create.creatingParentsIfNeeded.forPath(path)
     val barrier = new DistributedDoubleBarrier(curator, path, nrPeers)
     barrier.enter
     f(step)
