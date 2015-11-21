@@ -79,14 +79,13 @@ trait Worker extends Actor with ActorLogging {
   protected def initialize(refs: Seq[ActorRef], zookeepers: Seq[String], 
                            conf: Config) {
     peers = refs
-    log.info("Peers contain {}", peers)
     config = Option(conf)
-    barrier = Option(Barrier.create("/barrier", peers.length,
-      zookeepers.map { zk => ZooKeeper.fromString(zk) }
-    ))
+    if(-1 != index) {
+      barrier = Option(Barrier.create("/barrier", peers.length, index,
+        zookeepers.map { zk => ZooKeeper.fromString(zk) }
+      ))
+    }
   }
-
-
 
   protected def getReader: Reader = reader match {
     case Some(r) => r
@@ -179,7 +178,7 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
   }
 
   override def execute() { 
-    log.info("Start reading data ...")
+    log.info("Start reading data from step {} ...", getBarrier.currentStep)
     val data = getReader.foldLeft(Array.empty[Int]){ (result, line) => 
       result :+ line.toInt 
     }
@@ -190,10 +189,13 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
     val chunk = Math.ceil(data.length.toDouble / (peers.length.toDouble + 1d))
     var sampled = Seq.empty[Int]
     for(idx <- 0 until data.length) if(0 == idx % chunk) sampled :+= data(idx) 
-    getBarrier.sync({ step => peers.map { peer => at(peer.path.name) match {
-      case 0 => peer ! Collect[Array[Int]](sampled.toArray[Int])
-      case _ =>
-    }}})
+    log.info("Sampled: {}, chunk: {}", sampled, chunk)
+    getBarrier.sync({ step => 
+      peers.find( peer => peer.path.name.contains("0") ) match {
+        case Some(found) => found ! Collect[Array[Int]](sampled.toArray[Int])
+        case None => self ! Collect[Array[Int]](sampled.toArray[Int])
+      }
+    })
     log.info("2. Current step {}", getBarrier.currentStep)
     var pivotal = Seq.empty[Int]
     if(!collected.isEmpty) {

@@ -19,8 +19,8 @@ package psrs.util
 
 import org.apache.curator.framework.CuratorFrameworkFactory
 import org.apache.curator.framework.CuratorFramework
-import org.apache.curator.retry.RetryNTimes
 import org.apache.curator.framework.recipes.barriers.DistributedDoubleBarrier
+import org.apache.curator.retry.RetryNTimes
 
 import org.apache.zookeeper.CreateMode
 import org.apache.zookeeper.ZooDefs
@@ -48,7 +48,7 @@ protected[psrs] case class ZooKeeper(host: String = "localhost",
 
 object Barrier {
 
-  def create(root: String, nrPeers: Int, targets: Seq[ZooKeeper]): 
+  def create(root: String, nrPeers: Int, id: Int, targets: Seq[ZooKeeper]): 
       Barrier = root match {
     case null | "" => throw new IllegalArgumentException("Invalid root path!")
     case _ => {
@@ -58,14 +58,13 @@ object Barrier {
         sessionTimeoutMs(3*60*1000).retryPolicy(new RetryNTimes(3, 1000)).
         connectString(servers).build
       curator.start
-      new DefaultBarrier(curator, root, nrPeers: Int)
+      new DefaultBarrier(curator, root, nrPeers, id)
     }
   }
 
 }
 
 trait Barrier {
-
 
   def sync()
 
@@ -77,7 +76,8 @@ trait Barrier {
 
 protected[psrs] class DefaultBarrier(curator: CuratorFramework, 
                                      root: String, 
-                                     nrPeers: Int) extends Barrier {
+                                     nrPeers: Int,
+                                     id: Int) extends Barrier {
 
   val log = LoggerFactory.getLogger(classOf[DefaultBarrier])
 
@@ -88,17 +88,15 @@ protected[psrs] class DefaultBarrier(curator: CuratorFramework,
   override def sync() = sync({ s => })
   
   override def sync(f: (Int) => Unit) {
-    log.info("barrier sync begin at step {} ...", step)
     val path = root+"/"+step
-    curator.create.creatingParentsIfNeeded.forPath(path)
+    curator.checkExists.forPath(path) match {
+      case null => curator.create.creatingParentsIfNeeded.forPath(path)
+      case _ => 
+    }
     val barrier = new DistributedDoubleBarrier(curator, path, nrPeers)
-    log.info("enter barrier at step {} ...", step)
     barrier.enter
-    log.info("within barrier at step {} ...", step)
     f(step)
-    log.info("leave barrier at step {} ...", step)
     step += 1
     barrier.leave
-    log.info("barrier sync end at step {} ...", step)
   }
 }  
