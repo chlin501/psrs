@@ -26,6 +26,8 @@ import akka.actor.Deploy
 import akka.actor.Props
 import akka.remote.RemoteScope
 import akka.remote.AssociatedEvent
+import akka.util.Timeout
+import akka.pattern.ask
 
 import com.typesafe.config.Config
 import com.typesafe.config.ConfigFactory
@@ -34,13 +36,17 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 import java.io.File
+import java.util.concurrent.LinkedBlockingQueue
 
 import psrs.io.Reader
 import psrs.io.Writer
 import psrs.util.{ ZooKeeper, Barrier }
 
-import scala.util.Sorting
 import scala.collection.JavaConversions._
+import scala.concurrent.{Await, ExecutionContext, Future}
+import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration.FiniteDuration
+import scala.util.Sorting
 
 sealed trait Message
 case class Initialize(refs: Seq[ActorRef], zookeepers: Seq[String], 
@@ -49,20 +55,71 @@ case object Execute extends Message
 case class Collect[T](data: T) extends Message
 case class Broadcast[T](data: T) extends Message
 case class Aggregate[T](data: T) extends Message
-case object Ready extends Message
+case object GetAll extends Message
+case class Messages[T](data: T) extends Message
+case class Put[T](data: T) extends Message
+case class Hermes(messenger: ActorRef) extends Message
 
-trait Worker extends Actor with ActorLogging {
+trait Worker0 extends Actor with ActorLogging {
 
   protected val name = self.path.name
+
+  protected var peers = Seq.empty[ActorRef]
+
+  protected var messengers = Seq.empty[ActorRef]
+
+  protected var config: Option[Config] = None
+
+  protected def initialize(refs: Seq[ActorRef], zookeepers: Seq[String], 
+                           conf: Config) {
+    peers = refs
+    config = Option(conf)
+  }
+
+  protected def init: Receive = {
+    case Initialize(refs, zks, conf) => initialize(refs, zks, conf) 
+  }
+
+  protected def rest: Receive = {
+    case msg@_ => log.warning("Unknown message: {}", msg)
+  }
+
+  override def receive = init orElse rest
+
+}
+
+object Messenger {
+
+  def name(idx: Int) = "messenger" + "_" + idx
+
+  def props[T]: Props = Props(classOf[Messenger[T]])
+}
+
+protected[psrs] class Messenger[T] extends Worker0 {
+
+  protected var messages = Seq.empty[T]
+
+  protected def reset = messages = Seq.empty[T]
+
+  protected def msgs: Receive = {
+    case GetAll => { sender ! Messages(messages); reset }
+    case Put(data) => messages :+= data.asInstanceOf[T]
+  }
+  
+  override def receive = msgs orElse super.receive
+}
+
+trait Worker[T] extends Worker0 {
 
   protected val index = name.indexOf("_") match {
     case -1 => -1 
     case _ => name.split("_")(1).toInt
   }
 
-  protected var peers = Seq.empty[ActorRef]
-
-  protected var config: Option[Config] = None
+  protected val master = config match {
+    case Some(found) => found.getInt("psrs.master")
+    case None => 0
+  }
 
   protected var barrier: Option[Barrier] = None
 
@@ -70,18 +127,15 @@ trait Worker extends Actor with ActorLogging {
 
   protected var writer: Option[Writer] = None
 
-  protected var collected = Array.empty[Int]
+  protected val messenger = 
+    context.actorOf(Messenger.props[T], Messenger.name(index))
 
-  protected var broadcasted = Array.empty[Int]
-
-  protected var aggregated = Array.empty[Int]
-
-  protected def initialize(refs: Seq[ActorRef], zookeepers: Seq[String], 
+  override def initialize(refs: Seq[ActorRef], zookeepers: Seq[String], 
                            conf: Config) {
-    peers = refs
-    config = Option(conf)
+    super.initialize(refs, zookeepers, conf)
+    peers.foreach { peer => peer ! Hermes(messenger) }
     if(-1 != index) {
-      barrier = Option(Barrier.create("/barrier", peers.length, index,
+      barrier = Option(Barrier.create("/barrier", (peers.length + 1), index,
         zookeepers.map { zk => ZooKeeper.fromString(zk) }
       ))
     }
@@ -102,39 +156,17 @@ trait Worker extends Actor with ActorLogging {
     case None => throw new RuntimeException("Barrier not initialized!")
   }
 
-  protected def init: Receive = {
-    case Initialize(refs, zks, conf) => initialize(refs, zks, conf) 
-  }
-
   protected def execute() { }
 
   protected def exec: Receive = {
     case Execute => execute 
   }
 
-  protected def collect: Receive = {
-    case Collect(data) => collected ++= data.asInstanceOf[Array[Int]]
+  protected def msgr: Receive = {
+    case Hermes(hermes) => messengers :+= hermes
   }
 
-  protected def broadcast: Receive = {
-    case Broadcast(data) => broadcasted ++= data.asInstanceOf[Array[Int]]
-  }
-
-  protected def aggregate: Receive = {
-    case Aggregate(data) => aggregated ++= data.asInstanceOf[Array[Int]]
-  }
-
-  protected def ready(from: ActorRef) { }
-
-  protected def isReady: Receive = {
-    case Ready => ready(sender)
-  }
-
-  def rest: Receive = {
-    case msg@_ => log.warning("Unknown message: {}", msg)
-  }
-
-  override def receive = init orElse exec orElse collect orElse broadcast orElse aggregate orElse isReady orElse rest
+  override def receive = exec orElse msgr orElse super.receive
 
 }
 
@@ -160,7 +192,7 @@ object Worker {
 }
 
 protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int) 
-      extends Worker {
+      extends Worker[Seq[Int]] {
 
   import Worker._
 
@@ -177,39 +209,70 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
     writer = Option(Writer.withFile(outDir, output))
   }
 
-  override def execute() { 
-    log.info("Start reading data from step {} ...", getBarrier.currentStep)
+  protected def readData: Array[Int] = {
     val data = getReader.foldLeft(Array.empty[Int]){ (result, line) => 
       result :+ line.toInt 
     }
     Sorting.quickSort(data)
-    log.info("Sorted data {}", data.mkString("<", ", ", ">"))
-    getBarrier.sync
-    log.info("1. Current step {}", getBarrier.currentStep)
+    data
+  }
+
+  protected def sampling(data: Array[Int]): (Double, Seq[Int]) = {
     val chunk = Math.ceil(data.length.toDouble / (peers.length.toDouble + 1d))
     var sampled = Seq.empty[Int]
     for(idx <- 0 until data.length) if(0 == idx % chunk) sampled :+= data(idx) 
-    log.info("Sampled: {}, chunk: {}", sampled, chunk)
-    getBarrier.sync({ step => 
-      peers.find( peer => peer.path.name.contains("0") ) match {
-        case Some(found) => found ! Collect[Array[Int]](sampled.toArray[Int])
-        case None => self ! Collect[Array[Int]](sampled.toArray[Int])
+    (chunk, sampled)
+  }
+
+  protected def collect(data: Seq[Int]) = messengers.find( hermes => 
+    hermes.path.name.contains(master) 
+  ) match {
+    case Some(remote) => remote ! Put(data)  
+    case None => messenger ! Put(data)
+  }
+
+  protected def waitFor: Seq[Seq[Int]] = {
+    log.info("Retrieve data from messenger ...")
+    implicit val timeout = Timeout(5 seconds)
+    val future = ask(messenger, GetAll).mapTo[Messages[Seq[Seq[Int]]]] 
+    Await.result(future, 5 second).data
+  }
+
+  protected def findPivotal(chunk: Double): Seq[Int] = {
+    var pivotal = Seq.empty[Int] 
+    if(index == master) {
+      waitFor match {
+        case data if data.isEmpty => log.warning("No data in messenger!")
+        case data@_ => { 
+          val flatdata = data.flatten.toArray[Int]
+          Sorting.quickSort(flatdata)
+          for(idx <- 0 until flatdata.length) {
+            if(0 == idx % chunk) pivotal :+= flatdata(idx)
+          }
+          pivotal = pivotal.tail
+        }
       }
-    })
-    log.info("2. Current step {}", getBarrier.currentStep)
-    var pivotal = Seq.empty[Int]
-    if(!collected.isEmpty) {
-      Sorting.quickSort(collected)
-      for(idx <- 0 until collected.length) 
-        if(0 == idx % chunk) pivotal :+= collected(idx)
-      pivotal = pivotal.tail
-    }
+    } else log.info("Non master worker {} simply goes to sync fn ...", index)
+    pivotal 
+  }
+
+  protected def dispatch(pivotal: Seq[Int]) = { 
+    messengers.map { messenger => if(!pivotal.isEmpty) messenger ! Put(pivotal)}
+    messenger ! Put(pivotal)
+  }
+
+  override def execute() { 
+    val data = readData    
+    log.info("Sorted data {}", data.mkString("<", ", ", ">"))
+    getBarrier.sync
+    val (chunk, sampled) = sampling(data)
+    log.info("Sampled: {}, chunk: {}", sampled, chunk)
+    getBarrier.sync({ step => collect(sampled) })
+    val pivotal = findPivotal(chunk)
     log.info("Pivotal: {}", pivotal)
-    getBarrier.sync({ step => peers.map { peer => if(!pivotal.isEmpty)
-      peer ! Broadcast[Array[Int]](pivotal.toArray[Int])
-    }})
-    log.info("3. Current step {}", getBarrier.currentStep)
-    var result = Array.empty[Array[Int]]
+    getBarrier.sync({ step => dispatch(pivotal) })
+/*
+    var result = Array.empty[Array[T]]
     if(!broadcasted.isEmpty) {
       val pivotals = 0 +: broadcasted :+ data.last
       for(idx <- 0 until pivotals.length) if((pivotals.length - 1) != idx) 
@@ -220,14 +283,14 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
     getBarrier.sync({ step => if(result.length == (peers.length + 1) ) {
       val all = peers.patch(index, Seq(self), 0)
       all.zipWithIndex.foreach { case (ref, idx) => if(ref.equals(self))
-        self ! Aggregate[Array[Int]](result(idx)) else 
-        ref ! Aggregate[Array[Int]](result(idx)) 
+        self ! Aggregate[Array[T]](result(idx)) else 
+        ref ! Aggregate[Array[T]](result(idx)) 
       }
     }})
-    log.info("4. Current step {}", getBarrier.currentStep)
     Sorting.quickSort(aggregated)
     log.info("Aggregated result: {}", aggregated)
     getWriter.write(aggregated.mkString(",")+"\n").close
+*/
   }
 
   override def receive = super.receive
@@ -267,7 +330,7 @@ object Controller {
 
 }
 
-protected[psrs] class DefaultController(conf: Config) extends Worker {
+protected[psrs] class DefaultController(conf: Config) extends Worker0 {
 
   import Controller._
 

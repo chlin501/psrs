@@ -23,6 +23,7 @@ import org.apache.curator.framework.recipes.barriers.DistributedDoubleBarrier
 import org.apache.curator.retry.RetryNTimes
 
 import org.apache.zookeeper.CreateMode
+import org.apache.zookeeper.data.Stat
 import org.apache.zookeeper.ZooDefs
 
 import org.slf4j.Logger
@@ -90,9 +91,11 @@ protected[psrs] class DefaultBarrier(curator: CuratorFramework,
   override def sync(f: (Int) => Unit) {
     val path = root+"/"+step
     curator.checkExists.forPath(path) match {
-      case null => curator.create.creatingParentsIfNeeded.forPath(path)
-      case _ => 
+      case s:Stat => log.debug("Stat at path "+path+" is "+ s)
+      case _ => curator.create.creatingParentsIfNeeded.forPath(path)
     }
+    log.info("Worker "+id+" creates a double barrier instance at "+ path+
+             " with total "+nrPeers+" peers.")
     val barrier = new DistributedDoubleBarrier(curator, path, nrPeers)
     barrier.enter
     f(step)
