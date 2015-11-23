@@ -261,7 +261,7 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
     }
   }
 
-  protected def findPivotal(chunk: Double): Seq[Int] = {
+  protected def findPivotal: Seq[Int] = {
     var pivotal = Seq.empty[Int] 
     if(index == master) {
       waitFor match {
@@ -269,12 +269,15 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
         case data@_ => { 
           val flatdata = data.flatten.toArray[Int]
           Sorting.quickSort(flatdata)
-          log.info("Sampled data collected: {}", flatdata.mkString("[", ", ", "]"))
+          log.info("Sampled data collected: {}", 
+                   flatdata.mkString("[", ", ", "]"))
+          val chunk = Math.ceil(
+            flatdata.length.toDouble / peers.length.toDouble
+          )
           for(idx <- 0 until flatdata.length) {
-            if(0 == idx % chunk) pivotal :+= flatdata(idx)
+            if((chunk-1) == idx % chunk) pivotal :+= flatdata(idx)
           }
-          log.info("Before pivotal.tail: {}", pivotal)
-          pivotal = pivotal.tail
+          pivotal 
         }
       }
       log.info("Pivotal: {}", pivotal)
@@ -294,7 +297,7 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
     val (chunk, sampled) = sampling(data)
     log.info("Sampled data: {}, chunk: {}", sampled, chunk)
     getBarrier.sync({ step => sendTo(master.toInt, sampled) })
-    val pivotal = findPivotal(chunk)
+    val pivotal = findPivotal
     getBarrier.sync({ step => dispatch(pivotal) })
 /*
     var result = Array.empty[Array[T]]
