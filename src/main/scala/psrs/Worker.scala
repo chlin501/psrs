@@ -290,7 +290,7 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
     messenger.map(_ ! Put(pivotal))
   }
 
-  protected def splitWithPivotal(partial: Seq[Int]): Seq[Seq[Int]] = {
+  protected def splitByPivotal(partial: Seq[Int]): Seq[Seq[Int]] = {
     var splits = Seq.empty[Seq[Int]]
     waitFor match {
       case data if data.isEmpty => log.warning("No data found in messenger!")
@@ -299,10 +299,33 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
         val pivotals = 0 +: pivotal :+ partial.last
         for(idx <- 0 until pivotals.length) if((pivotals.length - 1) != idx) 
           splits :+= partial.filter( e => e > pivotals(idx) && 
-          e < pivotals(idx +1))
+          e <= pivotals(idx +1))
       }
     }  
     splits
+  }
+
+  protected def broadcast(splits: Seq[Seq[Int]]) {
+    if(splits.length != (peers.length + 1) ) 
+      throw new RuntimeException("Splits size "+splits.size+" and work size "+
+                                 (peers.length+1)+" not equal!")  
+    messenger.map { msgr => 
+      val all = (messengers :+ msgr).sortBy { m => 
+        m.path.name.split("_")(1).toInt 
+      }
+      all.zipWithIndex.foreach { case (m, idx) => m ! Put(splits(idx)) }
+    }
+  }
+
+  protected def merge =  waitFor match {
+    case data if data.isEmpty => log.warning("No splits found in messenger!")
+    case pieces@_ => { 
+      val flatten = pieces.flatten.toArray[Int]
+      Sorting.quickSort(flatten)
+      log.info("Final result for worker {}: {}", index, flatten.
+               mkString("[", ", ", "]"))
+      getWriter.write(flatten.mkString(",")+"\n").close
+    }
   }
 
   override def execute() { 
@@ -314,28 +337,10 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
     getBarrier.sync({ step => sendTo(master.toInt, sampled) })
     val pivotal = findPivotal
     getBarrier.sync({ step => dispatch(pivotal) })
-    val splits = splitWithPivotal(data)
+    val splits = splitByPivotal(data)
     log.info("Splitted data: {}", splits)
-/*
-    TODO: retrieve split points from each worker's messenger.
-    var result = Array.empty[Array[T]]
-    if(!broadcasted.isEmpty) {
-      val pivotals = 0 +: broadcasted :+ data.last
-      for(idx <- 0 until pivotals.length) if((pivotals.length - 1) != idx) 
-        result :+= data.filter( e => e > broadcasted(idx) && 
-          e < broadcasted(idx +1))
-    }
-    getBarrier.sync({ step => if(result.length == (peers.length + 1) ) {
-      val all = peers.patch(index, Seq(self), 0)
-      all.zipWithIndex.foreach { case (ref, idx) => if(ref.equals(self))
-        self ! Aggregate[Array[T]](result(idx)) else 
-        ref ! Aggregate[Array[T]](result(idx)) 
-      }
-    }})
-    Sorting.quickSort(aggregated)
-    log.info("Aggregated result: {}", aggregated)
-    getWriter.write(aggregated.mkString(",")+"\n").close
-*/
+    getBarrier.sync({ step => broadcast(splits) })
+    merge
   }
 
   override def receive = super.receive

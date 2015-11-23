@@ -1,7 +1,11 @@
 #!/bin/sh
 
-echo "stop all processes ..."
-jps | grep sbt-launch | awk '{print $1}' | xargs kill -9
+echo "stop all workers ..."
+pids=`jps | grep sbt-launch | awk '{print $1}'` 
+for pid in `echo $pids`
+do
+  kill -9 $pid
+done
 
 log=$1
 output=$2
