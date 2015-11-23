@@ -271,11 +271,11 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
           Sorting.quickSort(flatdata)
           log.info("Sampled data collected: {}", 
                    flatdata.mkString("[", ", ", "]"))
-          val chunk = Math.ceil(
+          val chunk = Math.floor (
             flatdata.length.toDouble / peers.length.toDouble
           )
           for(idx <- 0 until flatdata.length) {
-            if((chunk-1) == idx % chunk) pivotal :+= flatdata(idx)
+            if((chunk-2) == idx % chunk) pivotal :+= flatdata(idx)
           }
           pivotal 
         }
@@ -299,7 +299,9 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
     getBarrier.sync({ step => sendTo(master.toInt, sampled) })
     val pivotal = findPivotal
     getBarrier.sync({ step => dispatch(pivotal) })
+    
 /*
+    TODO: retrieve split points from each worker's messenger.
     var result = Array.empty[Array[T]]
     if(!broadcasted.isEmpty) {
       val pivotals = 0 +: broadcasted :+ data.last
