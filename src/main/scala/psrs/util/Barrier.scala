@@ -74,6 +74,8 @@ trait Barrier {
 
   def currentStep: Int
 
+  def close()
+
 }
 
 protected[psrs] class DefaultBarrier(curator: CuratorFramework, 
@@ -116,4 +118,6 @@ protected[psrs] class DefaultBarrier(curator: CuratorFramework,
     step += 1
     barrier.leave
   }
+
+  override def close() = curator.close
 }  

@@ -61,6 +61,7 @@ case object CheckIfAllCollected extends Message
 case object GetAll extends Message
 case class Messages[T](data: T) extends Message
 case class Put[T](data: T) extends Message
+case object Accomplished extends Message
 
 trait Worker0 extends Actor with ActorLogging {
 
@@ -93,6 +94,8 @@ trait Worker0 extends Actor with ActorLogging {
   protected def rest: Receive = {
     case msg@_ => log.warning("Unknown message: {}", msg)
   }
+
+  protected def shutdown = context.system.shutdown
 
   override def receive = init orElse rest
 
@@ -146,6 +149,12 @@ trait Worker[T] extends Worker0 {
   protected var reader: Option[Reader] = None
 
   protected var writer: Option[Writer] = None
+
+  override def postStop() {
+    barrier.map(_.close) 
+    reader.map(_.close) 
+    writer.map(_.close) 
+  }
 
   override def initialize(refs: Seq[ActorRef], 
                           msgrs: Seq[ActorRef],
@@ -341,7 +350,10 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
     log.info("Splitted data: {}", splits)
     getBarrier.sync({ step => broadcast(splits) })
     merge
+    accomplished
   }
+
+  protected def accomplished = ctrl ! Accomplished
 
   override def receive = super.receive
 }
@@ -430,6 +442,26 @@ protected[psrs] class DefaultController(conf: Config) extends Worker0 {
     }
   }
 
-  override def receive = super.receive
+  protected def msgs: Receive = {
+    case Accomplished => { 
+      workers.find( worker => worker.path.name.equals(sender.path.name)) match {
+        case Some(found) => {
+          val index = found.path.name.split("_")(1)
+          context.stop(found)
+          workers = workers diff Seq(found)
+          messengers.find( m => m.path.name.contains(index)).map { m => 
+            context.stop(m)
+            messengers = messengers diff Seq(m)
+          }
+        }
+        case None => 
+      }
+      if(workers.isEmpty && messengers.isEmpty) {
+        log.info("Shutdown system ..."); shutdown
+      }
+    }
+  }
+
+  override def receive = msgs orElse super.receive
   
 }

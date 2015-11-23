@@ -31,6 +31,8 @@ trait Reader {
 
   def foldLeft[R](r: R)(f: (R, Line) => R): R
 
+  def close()
+
 }
 
 object Reader {
@@ -59,5 +61,7 @@ protected[psrs] class DefaultReader(reader: BufferedReader) extends Reader {
     }
     result
   }
+
+  override def close() = reader.close
 
 }  
