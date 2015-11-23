@@ -250,7 +250,7 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
   }
 
   protected def waitFor: Seq[Seq[Int]] = {
-    log.info("Retrieve data from messenger ...")
+    log.info("Retrieve data from messenger {} ...", self.path.name)
     implicit val timeout = Timeout(5 seconds)
     messenger match {  
       case Some(msgr) => {
@@ -290,6 +290,21 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
     messenger.map(_ ! Put(pivotal))
   }
 
+  protected def splitWithPivotal(partial: Seq[Int]): Seq[Seq[Int]] = {
+    var splits = Seq.empty[Seq[Int]]
+    waitFor match {
+      case data if data.isEmpty => log.warning("No data found in messenger!")
+      case data@_ => { 
+        val pivotal = data.flatten.toArray[Int]
+        val pivotals = 0 +: pivotal :+ partial.last
+        for(idx <- 0 until pivotals.length) if((pivotals.length - 1) != idx) 
+          splits :+= partial.filter( e => e > pivotals(idx) && 
+          e < pivotals(idx +1))
+      }
+    }  
+    splits
+  }
+
   override def execute() { 
     val data = readData    
     log.info("Sorted data {}", data.mkString("<", ", ", ">"))
@@ -299,7 +314,8 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
     getBarrier.sync({ step => sendTo(master.toInt, sampled) })
     val pivotal = findPivotal
     getBarrier.sync({ step => dispatch(pivotal) })
-    
+    val splits = splitWithPivotal(data)
+    log.info("Splitted data: {}", splits)
 /*
     TODO: retrieve split points from each worker's messenger.
     var result = Array.empty[Array[T]]
@@ -309,7 +325,6 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
         result :+= data.filter( e => e > broadcasted(idx) && 
           e < broadcasted(idx +1))
     }
-    log.info("Result: {}", result)
     getBarrier.sync({ step => if(result.length == (peers.length + 1) ) {
       val all = peers.patch(index, Seq(self), 0)
       all.zipWithIndex.foreach { case (ref, idx) => if(ref.equals(self))
