@@ -22,6 +22,7 @@ import akka.actor.ActorRef
 import akka.actor.ActorLogging
 import akka.actor.ActorSystem
 import akka.actor.Address
+import akka.actor.Cancellable
 import akka.actor.Deploy
 import akka.actor.Props
 import akka.remote.RemoteScope
@@ -49,16 +50,17 @@ import scala.concurrent.duration.FiniteDuration
 import scala.util.Sorting
 
 sealed trait Message
-case class Initialize(refs: Seq[ActorRef], zookeepers: Seq[String], 
+case class Initialize(refs: Seq[ActorRef], 
+                      msgrs: Seq[ActorRef],
+                      zookeepers: Seq[String], 
+                      msgr: ActorRef,
                       config: Config) extends Message
+case object Ready extends Message
 case object Execute extends Message
-case class Collect[T](data: T) extends Message
-case class Broadcast[T](data: T) extends Message
-case class Aggregate[T](data: T) extends Message
+case object CheckIfAllCollected extends Message
 case object GetAll extends Message
 case class Messages[T](data: T) extends Message
 case class Put[T](data: T) extends Message
-case class Hermes(messenger: ActorRef) extends Message
 
 trait Worker0 extends Actor with ActorLogging {
 
@@ -68,16 +70,24 @@ trait Worker0 extends Actor with ActorLogging {
 
   protected var messengers = Seq.empty[ActorRef]
 
+  protected var messenger: Option[ActorRef] = None
+
   protected var config: Option[Config] = None
 
-  protected def initialize(refs: Seq[ActorRef], zookeepers: Seq[String], 
+  protected def initialize(refs: Seq[ActorRef], 
+                           msgrs: Seq[ActorRef], 
+                           zookeepers: Seq[String], 
+                           msgr: ActorRef, 
                            conf: Config) {
     peers = refs
+    messengers = msgrs
+    messenger = Option(msgr)
     config = Option(conf)
   }
 
   protected def init: Receive = {
-    case Initialize(refs, zks, conf) => initialize(refs, zks, conf) 
+    case Initialize(refs, mgrs, zks, msgr, conf) => 
+      initialize(refs, mgrs, zks, msgr, conf)
   }
 
   protected def rest: Receive = {
@@ -92,18 +102,28 @@ object Messenger {
 
   def name(idx: Int) = "messenger" + "_" + idx
 
-  def props[T]: Props = Props(classOf[Messenger[T]])
+  def props[T](size: Int): Props = Props(classOf[Messenger[T]], size)
 }
 
-protected[psrs] class Messenger[T] extends Worker0 {
+protected[psrs] class Messenger[T](peerSize: Int) extends Worker0 {
 
   protected var messages = Seq.empty[T]
+
+  protected var from: Option[ActorRef] = None
 
   protected def reset = messages = Seq.empty[T]
 
   protected def msgs: Receive = {
-    case GetAll => { sender ! Messages(messages); reset }
-    case Put(data) => messages :+= data.asInstanceOf[T]
+    case GetAll => { 
+      sender ! Messages(messages)
+      reset
+      log.debug("Reply to {} ", sender.path.name)
+    }
+    case Put(data) => {
+      messages :+= data.asInstanceOf[T]
+      log.debug("messages sent from {}, current messages size: {}", 
+               sender.path.name, messages.length)
+    }
   }
   
   override def receive = msgs orElse super.receive
@@ -127,13 +147,12 @@ trait Worker[T] extends Worker0 {
 
   protected var writer: Option[Writer] = None
 
-  protected val messenger = 
-    context.actorOf(Messenger.props[T], Messenger.name(index))
-
-  override def initialize(refs: Seq[ActorRef], zookeepers: Seq[String], 
-                           conf: Config) {
-    super.initialize(refs, zookeepers, conf)
-    peers.foreach { peer => peer ! Hermes(messenger) }
+  override def initialize(refs: Seq[ActorRef], 
+                          msgrs: Seq[ActorRef],
+                          zookeepers: Seq[String], 
+                          msgr: ActorRef,
+                          conf: Config) {
+    super.initialize(refs, msgrs, zookeepers, msgr, conf)
     if(-1 != index) {
       barrier = Option(Barrier.create("/barrier", (peers.length + 1), index,
         zookeepers.map { zk => ZooKeeper.fromString(zk) }
@@ -162,11 +181,7 @@ trait Worker[T] extends Worker0 {
     case Execute => execute 
   }
 
-  protected def msgr: Receive = {
-    case Hermes(hermes) => messengers :+= hermes
-  }
-
-  override def receive = exec orElse msgr orElse super.receive
+  override def receive = exec orElse super.receive
 
 }
 
@@ -196,9 +211,12 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
 
   import Worker._
 
-  override def initialize(refs: Seq[ActorRef], zookeepers: Seq[String], 
-                           conf: Config) {
-    super.initialize(refs, zookeepers, conf)
+  override def initialize(refs: Seq[ActorRef], 
+                          msgrs: Seq[ActorRef],
+                          zookeepers: Seq[String], 
+                          msgr: ActorRef,
+                          conf: Config) {
+    super.initialize(refs, msgrs, zookeepers, msgr, conf)
     val inputDir = conf.getString("psrs.input-dir")
     val input = inputDir+"/"+host+"_"+port+".txt"
     log.info("Input data is from {}", input)
@@ -224,18 +242,23 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
     (chunk, sampled)
   }
 
-  protected def collect(data: Seq[Int]) = messengers.find( hermes => 
-    hermes.path.name.contains(master) 
-  ) match {
+  protected def sendTo(id: Int, data: Seq[Int]) = messengers.find( hermes => {
+    hermes.path.name.contains(id.toString) 
+  }) match {
     case Some(remote) => remote ! Put(data)  
-    case None => messenger ! Put(data)
+    case None => messenger.map(_ ! Put(data))
   }
 
   protected def waitFor: Seq[Seq[Int]] = {
     log.info("Retrieve data from messenger ...")
     implicit val timeout = Timeout(5 seconds)
-    val future = ask(messenger, GetAll).mapTo[Messages[Seq[Seq[Int]]]] 
-    Await.result(future, 5 second).data
+    messenger match {  
+      case Some(msgr) => {
+        val future = ask(msgr, GetAll).mapTo[Messages[Seq[Seq[Int]]]] 
+        Await.result(future, 5 second).data
+      }
+      case None => Seq.empty[Seq[Int]]
+    }
   }
 
   protected def findPivotal(chunk: Double): Seq[Int] = {
@@ -246,19 +269,22 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
         case data@_ => { 
           val flatdata = data.flatten.toArray[Int]
           Sorting.quickSort(flatdata)
+          log.info("Sampled data collected: {}", flatdata.mkString("[", ", ", "]"))
           for(idx <- 0 until flatdata.length) {
             if(0 == idx % chunk) pivotal :+= flatdata(idx)
           }
+          log.info("Before pivotal.tail: {}", pivotal)
           pivotal = pivotal.tail
         }
       }
-    } else log.info("Non master worker {} simply goes to sync fn ...", index)
+      log.info("Pivotal: {}", pivotal)
+    } else log.info("Non master worker {} simply goes to sync function.", index)
     pivotal 
   }
 
   protected def dispatch(pivotal: Seq[Int]) = { 
-    messengers.map { messenger => if(!pivotal.isEmpty) messenger ! Put(pivotal)}
-    messenger ! Put(pivotal)
+    messengers.map { msgr => if(!pivotal.isEmpty) msgr ! Put(pivotal) }
+    messenger.map(_ ! Put(pivotal))
   }
 
   override def execute() { 
@@ -266,10 +292,9 @@ protected[psrs] class DefaultWorker(ctrl: ActorRef, host: String, port: Int)
     log.info("Sorted data {}", data.mkString("<", ", ", ">"))
     getBarrier.sync
     val (chunk, sampled) = sampling(data)
-    log.info("Sampled: {}, chunk: {}", sampled, chunk)
-    getBarrier.sync({ step => collect(sampled) })
+    log.info("Sampled data: {}, chunk: {}", sampled, chunk)
+    getBarrier.sync({ step => sendTo(master.toInt, sampled) })
     val pivotal = findPivotal(chunk)
-    log.info("Pivotal: {}", pivotal)
     getBarrier.sync({ step => dispatch(pivotal) })
 /*
     var result = Array.empty[Array[T]]
@@ -330,7 +355,7 @@ object Controller {
 
 }
 
-protected[psrs] class DefaultController(conf: Config) extends Worker0 {
+protected[psrs] class DefaultController(conf: Config) extends Worker0 { 
 
   import Controller._
 
@@ -353,13 +378,30 @@ protected[psrs] class DefaultController(conf: Config) extends Worker0 {
       workers +:= context.actorOf (
         Worker.props(self, systemName, host, port, protocol), Worker.name(idx)
       )
+      messengers +:= context.actorOf(
+        Messenger.props[Seq[Int]](workers.length), Messenger.name(idx)
+      )
     }
     log.info("Worker size: {}", workers.size)
     workers.foreach { worker => 
       log.info("Instruct {} starting execution ...", worker.path.name)
       val zookeepers = conf.getStringList("psrs.zookeepers").toSeq
-      worker ! Initialize(workers diff Seq(worker), zookeepers, conf) 
-      worker ! Execute
+      messengers.find( msgr => 
+        worker.path.name.contains(msgr.path.name.split("_")(1))
+      ) match {
+        case Some(msgr) => {
+          worker ! Initialize(workers diff Seq(worker), 
+                              messengers diff Seq(msgr), 
+                              zookeepers, 
+                              msgr, 
+                              conf) 
+          worker ! Execute
+          log.info("Start executing worker {} ...", worker.path.name)
+        }
+        case None => 
+          log.error("Unable to start worker {} for missing messenger!", 
+                    worker.path.name)
+      }
     }
   }
 
